@@ -24,8 +24,9 @@ A simple ping monitoring tool that sits in your system tray and keeps an eye on 
   - Default option is to keep track of deviations from past 24 hours
 
 - ⚙️ **Highly Configurable** 
-  - You can change the ping intervals, thresholds, deviation logs retain time and pinged servers with ease
-  - See [configuration](#%EF%B8%8F-configuration) section for more details
+  - Customize servers, ping intervals, thresholds, UI theme colors, animation settings and more
+  - Full configuration through simple `config.py` with constants
+  - See [⚙️ Configuration](#⚙️-configuration) section for more details
 
 ## 🛠️ Installation
 
@@ -57,12 +58,12 @@ A simple ping monitoring tool that sits in your system tray and keeps an eye on 
 
 ## ⚙️ Configuration
 
-#### All configuration is done in `ping_monitor.py`.
+#### All configuration is done in `src/core/config.py`.
 
-- Change what servers you would like to ping
+- **Change what servers you would like to ping**
   ```python
-  # Title (key) can be any string, IP (value) must be real public IP
-  self.servers = {
+  # Server name (key) can be any string, IP (value) must be real public IP
+  SERVERS = {
       "cloudflare.com": "1.1.1.1",
       "google.com": "8.8.8.8",
       "seznam.cz": "77.75.77.222",
@@ -71,17 +72,42 @@ A simple ping monitoring tool that sits in your system tray and keeps an eye on 
   ```
   There must be at least one server to ping. You can add as many servers as you want; it has very minor impact on the network itself.
   
-- Change the ping threshold or interval
+- **Change the ping threshold or interval**
   ```python
-  self.ping_threshold = 60  # milliseconds
-  self.ping_interval = 1  # seconds
+  PING_THRESHOLD = 60  # ms (for deviation logging)
+  PING_INTERVAL = 1    # seconds between pings
   ```
 
-- Change the preserved time period (in minutes)
+- **Change the preserved time period**
   ```python
-  self.preserved_minutes = 10
+  PRESERVED_MINUTES = 10  # minutes to preserve and display per tab
   ```
   Maximum amount of lines per tab is calculated from ping interval and preserved minutes (default is 600 → 10 minutes, 1 ping each second).
+
+- **Customize the UI theme**
+  ```python
+  THEME = {
+      "bg_color": "#111111",           # Background color
+      "accent_color": "#ffb400",       # Gold accent color
+      "text_color": "#ffffff",         # Text color
+      "log_bg_color": "#1e1e1e",       # Log area background
+      "bg_highlight_color": "#3a3a3a", # New entry highlight background
+  }
+  ```
+
+- **Configure deviation logging**
+  ```python
+  DEVIATIONS_FILE = "deviations.txt"  # File to log high pings
+  ```
+
+- **Adjust animation settings**
+  ```python
+  ANIMATION_SETTINGS = {
+      "enabled": True,      # Enable/disable animations
+      "duration": 800,      # Animation duration in ms
+      "steps": 8,          # Animation steps
+  }
+  ```
 
 ## 🐞 Troubleshooting
 
