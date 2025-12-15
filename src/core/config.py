@@ -28,7 +28,7 @@ THEME = {
 
 # App behavior configuration
 # Set to None to ask user on startup. True = minimize to tray, False = exit app.
-CLOSE_TO_TRAY = True
+CLOSE_TO_TRAY = None
 
 # Animation settings
 ANIMATION_SETTINGS = {
