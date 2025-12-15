@@ -35,6 +35,18 @@ class PingService:
         self.ping_queue = queue.Queue()
         self.running = True
 
+    def reset_stats(self, server_name):
+        """Reset statistics for a specific server"""
+        if server_name in self.ping_results:
+            self.ping_results[server_name].clear()
+            self.ping_times[server_name].clear()
+            self.deviation_counts[server_name] = 0
+
+    def reset_all_stats(self):
+        """Reset statistics for all servers"""
+        for server_name in self.servers.keys():
+            self.reset_stats(server_name)
+
     def ping_server(self, server_name, ip_address):
         """Ping a single server and return the result"""
         try:

@@ -38,7 +38,7 @@ class PingMonitor:
 
         # Application state
         self.running = True
-        self.window_visible = False
+        self.window_visible = True  # Start visible now
 
         # Initialize components
         self.ping_service = None
@@ -78,31 +78,34 @@ class PingMonitor:
             os.path.dirname(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             ),
-            ICON_FILE.replace("assets/", ""),
+            ICON_FILE,
         )
         self.system_tray = SystemTray(self, icon_path)
 
     def run(self):
         """Start the application"""
         try:
-            # Start ping service
-            self.ping_service.perform_warmup_pings()
-            self.ping_service.start_ping_thread()
-
-            # Start system tray in a separate thread
-            tray_thread = threading.Thread(target=self.system_tray.run, daemon=True)
-            tray_thread.start()
-
-            # Start periodic cleanup
-            self._start_periodic_cleanup()
-
             # Start main GUI loop
+            # The GUI will call start_services() when ready (after first run config if needed)
             self.main_window.mainloop()
 
         except KeyboardInterrupt:
-            print("\\nShutting down...")
+            print("\nShutting down...")
         finally:
             self._shutdown()
+
+    def start_services(self):
+        """Start background services (ping, tray, cleanup)"""
+        # Start ping service
+        self.ping_service.perform_warmup_pings()
+        self.ping_service.start_ping_thread()
+
+        # Start system tray in a separate thread
+        tray_thread = threading.Thread(target=self.system_tray.run, daemon=True)
+        tray_thread.start()
+
+        # Start periodic cleanup
+        self._start_periodic_cleanup()
 
     def _start_periodic_cleanup(self):
         """Start periodic cleanup of deviation logs"""
@@ -176,6 +179,10 @@ class PingMonitor:
             self.window_visible = False
             if self.system_tray:
                 self.system_tray.refresh_menu()
+
+    def quit(self):
+        """Quit the application (called from window close button)"""
+        self.quit_application()
 
     def quit_application(self, icon=None, item=None):
         """Quit the entire application"""

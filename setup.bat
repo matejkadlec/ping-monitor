@@ -8,11 +8,33 @@ echo    Ping Monitor Setup Script
 echo ========================================
 echo.
 
-cd /d "c:\Users\matka\Desktop\Google Drive\python_scripts\ping_monitor"
+cd /d "%~dp0"
+
+REM Check for broken virtual environment
+if exist "venv" (
+    "venv\Scripts\python.exe" --version >nul 2>&1
+    if errorlevel 1 (
+        echo.
+        echo ⚠️  Detected broken virtual environment.
+        echo 🔄 Cleaning up old environment...
+        rmdir /s /q "venv"
+    )
+)
+
+if not exist "venv" (
+    echo Creating virtual environment...
+    python -m venv venv
+    if %errorlevel% neq 0 (
+        echo.
+        echo ✗ Failed to create virtual environment. Please make sure Python 3.14.2 is installed and in your PATH.
+        pause
+        exit /b 1
+    )
+)
 
 echo Installing/Updating required packages...
 "venv\Scripts\python.exe" -m pip install --upgrade pip
-"venv\Scripts\pip.exe" install --upgrade pystray pillow psutil winshell pywin32
+"venv\Scripts\pip.exe" install -r requirements.txt
 
 echo.
 echo Testing package imports...

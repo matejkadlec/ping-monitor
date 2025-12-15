@@ -30,17 +30,8 @@ class SystemTray:
 
     def _setup_tray(self):
         """Setup system tray icon"""
-        # Try to use icon.ico if available, otherwise create fallback
-        if self.icon_path and os.path.exists(self.icon_path):
-            try:
-                self._load_icon_states()
-            except Exception as e:
-                print(f"Error loading icon states: {e}")
-                self._create_fallback_icons()
-        else:
-            if self.icon_path:
-                print(f"Icon file not found at: {self.icon_path}")
-            self._create_fallback_icons()
+        # Create dynamic circle icons as requested
+        self._create_circle_icons()
 
         # Set initial icon image to neutral
         self.icon_image = self.icon_images["neutral"]
@@ -73,52 +64,26 @@ class SystemTray:
             ]
         )
 
-    def _load_icon_states(self):
-        """Load and cache all icon states"""
-        if not self.icon_path:
-            return
-
-        try:
-            # Load base icon
-            base_image = Image.open(self.icon_path)
-            if base_image.mode != "RGBA":
-                base_image = base_image.convert("RGBA")
-
-            # Create different colored states
-            self.icon_images["neutral"] = base_image.copy()
-
-            # Create green tinted version
-            green_overlay = Image.new("RGBA", base_image.size, (0, 255, 0, 60))
-            self.icon_images["green"] = Image.alpha_composite(base_image, green_overlay)
-
-            # Create red tinted version
-            red_overlay = Image.new("RGBA", base_image.size, (255, 0, 0, 60))
-            self.icon_images["red"] = Image.alpha_composite(base_image, red_overlay)
-
-        except Exception as e:
-            print(f"Error in load_icon_states: {e}")
-            self._create_fallback_icons()
-
-    def _create_fallback_icons(self):
-        """Create simple fallback icons if main icon is not available"""
-        # Create simple 32x32 colored circles as fallback icons
+    def _create_circle_icons(self):
+        """Create simple colored circles for tray icon"""
         size = (32, 32)
 
-        # Neutral (white/gray)
+        # Neutral (Grey) - Initial state
         neutral_img = Image.new("RGBA", size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(neutral_img)
+        # Draw circle
         draw.ellipse(
-            [4, 4, 28, 28], fill=(200, 200, 200, 255), outline=(100, 100, 100, 255)
+            [4, 4, 28, 28], fill=(128, 128, 128, 255), outline=(80, 80, 80, 255)
         )
         self.icon_images["neutral"] = neutral_img
 
-        # Green
+        # Green - Good connection
         green_img = Image.new("RGBA", size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(green_img)
         draw.ellipse([4, 4, 28, 28], fill=(0, 255, 0, 255), outline=(0, 150, 0, 255))
         self.icon_images["green"] = green_img
 
-        # Red
+        # Red - Bad connection
         red_img = Image.new("RGBA", size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(red_img)
         draw.ellipse([4, 4, 28, 28], fill=(255, 0, 0, 255), outline=(150, 0, 0, 255))
