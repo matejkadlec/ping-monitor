@@ -58,3 +58,9 @@ ping_monitor/
 - **Theme**: The app uses a dark theme defined in `config.py`.
 - **Icons**: Icons are drawn programmatically using Pillow (PIL) in `MainWindow` to avoid external dependencies for simple assets.
 - **Threading**: Tkinter runs in the main thread. Network operations run in background threads. `queue` is used for communication.
+
+## 📝 Interaction Guidelines
+
+- **Post-Change Instructions**: After making any changes to the code, always instruct the user on how to apply them:
+  - If dependencies were changed: "Please run `setup.bat` to update dependencies."
+  - Otherwise: "Please run `run.vbs` to start the application."

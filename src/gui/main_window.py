@@ -12,6 +12,7 @@ import src.core.config as config_module
 from src.gui.components.server_tab import ServerTab
 from src.gui.dialogs.first_run import FirstRunDialog
 from src.gui.utils.animations import AnimationUtils
+from src.gui.utils.icon_painter import IconPainter
 
 
 class MainWindow:
@@ -24,12 +25,17 @@ class MainWindow:
 
         # GUI elements
         self.root = None
-        self.notebook = None  # Tabbed interface
-        self.server_tabs = {}  # One ServerTab per server
+        self.notebook = None
+        self.server_tabs = {}
         self.window_visible = False
         self.bg_image_original = None
         self.bg_image_tk = None
         self.bg_label = None
+
+        # Resize handling
+        self.resize_timer = None
+        self.is_resizing = False
+        self.resize_overlay = None
 
         # Utilities
         self.animation_utils = AnimationUtils(THEME, ANIMATION_SETTINGS)
@@ -39,9 +45,8 @@ class MainWindow:
 
         self._setup_gui()
 
-        # Check for first run configuration
-        # If first run (hidden window), show dialog sooner
-        delay = 100 if config_module.CLOSE_TO_TRAY is None else 1000
+        # Show first-run dialog if not configured, otherwise start services
+        delay = 100 if config_module.CLOSE_TO_TRAY is None else 0
         self.root.after(delay, self._check_close_behavior)
 
     def _check_close_behavior(self):
@@ -51,12 +56,10 @@ class MainWindow:
             self.updates_paused = True
 
             def on_complete():
-                # Show main window now that configuration is done
                 self.root.deiconify()
-                self.root.state("zoomed")
+                self.root.geometry("1200x800")
                 self.window_visible = True
                 self.updates_paused = False
-                # Start background services now that we are configured
                 self.app.start_services()
                 self._start_gui_update_thread()
 
@@ -116,10 +119,10 @@ class MainWindow:
 
         # Configure window visibility based on first run status
         if config_module.CLOSE_TO_TRAY is None:
-            self.root.withdraw()  # Hide main window for first run dialog
+            self.root.withdraw()
             self.window_visible = False
         else:
-            self.root.state("zoomed")  # Start maximized
+            self.root.geometry("1200x800")
             self.window_visible = True
 
         # Configure window close button - will be updated by _check_close_behavior
@@ -135,11 +138,14 @@ class MainWindow:
         # Note: _start_gui_update_thread is now called after configuration/startup
 
     def _resize_background(self, event):
-        """Resize background image to fit window"""
+        """Resize background image to fit window with debounce"""
+        if event.widget != self.root:
+            return
+
         if not self.bg_image_original or not self.bg_label:
             return
 
-        # Only resize if dimensions changed significantly to avoid lag
+        # Only resize if dimensions changed significantly
         if (
             hasattr(self, "_last_bg_size")
             and abs(self._last_bg_size[0] - event.width) < 10
@@ -147,12 +153,41 @@ class MainWindow:
         ):
             return
 
-        self._last_bg_size = (event.width, event.height)
+        # Cancel previous timer
+        if self.resize_timer:
+            self.root.after_cancel(self.resize_timer)
 
-        # Resize image using LANCZOS for quality
-        # Use cover mode (crop if needed)
+        # Show overlay to cover white background during resize
+        if not self.is_resizing:
+            self.is_resizing = True
+            self._show_resize_overlay()
+
+        # Schedule the actual resize
+        self.resize_timer = self.root.after(
+            300, lambda: self._perform_resize(event.width, event.height)
+        )
+
+    def _show_resize_overlay(self):
+        """Show overlay to cover white background during resize"""
+        if not self.resize_overlay:
+            self.resize_overlay = tk.Frame(self.root, bg=self.theme["bg_color"])
+
+        self.resize_overlay.place(x=0, y=0, relwidth=1, relheight=1)
+        self.resize_overlay.lift()
+
+    def _perform_resize(self, width, height):
+        """Perform the actual background resize"""
+        self.is_resizing = False
+
+        # Hide overlay
+        if self.resize_overlay:
+            self.resize_overlay.place_forget()
+
+        self._last_bg_size = (width, height)
+
+        # Resize image using LANCZOS and crop to center
         img_w, img_h = self.bg_image_original.size
-        target_w, target_h = event.width, event.height
+        target_w, target_h = width, height
 
         ratio = max(target_w / img_w, target_h / img_h)
         new_w = int(img_w * ratio)
@@ -185,17 +220,8 @@ class MainWindow:
 
     def _create_main_layout(self):
         """Create the main layout with toolbar, content, and footer"""
-        # Main container frame (transparent-ish look by not filling everything)
-        # We use place to put it on top of the background label
-        # Using a frame with padding to show background around it
-
-        # Toolbar at the top (transparent background to show image?)
-        # Tkinter frames are opaque. We'll make a frame that spans the top.
-        # To make it look good, we might want it to be semi-transparent or just small buttons floating.
-        # Let's make a toolbar frame.
-
+        # Main container with margins to show background
         self.main_container = tk.Frame(self.root, bg=self.theme["bg_color"])
-        # Place it with margins so background is visible
         self.main_container.place(relx=0.05, rely=0.05, relwidth=0.9, relheight=0.9)
 
         # Toolbar
@@ -207,17 +233,14 @@ class MainWindow:
     def _create_toolbar(self, parent):
         """Create the toolbar with icon buttons"""
         toolbar_frame = tk.Frame(parent, bg=self.theme["bg_color"])
-        # Reduced top margin to match bottom margin (pady=5)
         toolbar_frame.pack(fill=tk.X, pady=5, padx=5)
 
-        # Create icons
         self.icons = {
             "config": self._draw_icon("config"),
             "logs": self._draw_icon("logs"),
             "reset": self._draw_icon("reset"),
         }
 
-        # Config Button - Reduced left margin
         btn_config = tk.Label(
             toolbar_frame,
             image=self.icons["config"],
@@ -228,7 +251,6 @@ class MainWindow:
         btn_config.bind("<Button-1>", lambda e: self._open_config())
         self._create_tooltip(btn_config, "Open config")
 
-        # Logs Button - Reduced gap
         btn_logs = tk.Label(
             toolbar_frame,
             image=self.icons["logs"],
@@ -239,7 +261,6 @@ class MainWindow:
         btn_logs.bind("<Button-1>", lambda e: self._open_logs())
         self._create_tooltip(btn_logs, "Open logs")
 
-        # Reset Button - Reduced gap
         btn_reset = tk.Label(
             toolbar_frame,
             image=self.icons["reset"],
@@ -251,90 +272,9 @@ class MainWindow:
         self._create_tooltip(btn_reset, "Reset metrics")
 
     def _draw_icon(self, name, size=24):
-        """Draw simple icons using PIL"""
-        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        color = self.theme["accent_color"]  # Use accent color for icons
-
-        if name == "config":
-            # Gear ⚙️
-            # Center hole
-            draw.ellipse([8, 8, size - 8, size - 8], outline=color, width=2)
-            # Teeth
-            import math
-
-            center = size / 2
-            outer_radius = size / 2 - 1
-            inner_radius = size / 2 - 4
-
-            for i in range(0, 360, 45):
-                angle_rad = math.radians(i)
-                # Draw tooth
-                x1 = center + inner_radius * math.cos(angle_rad - 0.2)
-                y1 = center + inner_radius * math.sin(angle_rad - 0.2)
-                x2 = center + outer_radius * math.cos(angle_rad - 0.2)
-                y2 = center + outer_radius * math.sin(angle_rad - 0.2)
-                x3 = center + outer_radius * math.cos(angle_rad + 0.2)
-                y3 = center + outer_radius * math.sin(angle_rad + 0.2)
-                x4 = center + inner_radius * math.cos(angle_rad + 0.2)
-                y4 = center + inner_radius * math.sin(angle_rad + 0.2)
-
-                draw.polygon([(x1, y1), (x2, y2), (x3, y3), (x4, y4)], fill=color)
-
-        elif name == "logs":
-            # Document 📃
-            # Paper body
-            draw.polygon(
-                [
-                    (5, 2),
-                    (size - 9, 2),
-                    (size - 5, 6),
-                    (size - 5, size - 2),
-                    (5, size - 2),
-                ],
-                outline=color,
-                width=2,
-            )
-            # Folded corner
-            draw.line(
-                [(size - 9, 2), (size - 9, 6), (size - 5, 6)], fill=color, width=1
-            )
-            # Lines
-            draw.line([(9, 8), (size - 9, 8)], fill=color, width=2)
-            draw.line([(9, 12), (size - 9, 12)], fill=color, width=2)
-            draw.line([(9, 16), (size - 9, 16)], fill=color, width=2)
-
-        elif name == "reset":
-            # Recycle ♻️
-            # Top arc
-            draw.arc([4, 4, size - 4, size - 4], 30, 150, fill=color, width=2)
-            # Bottom arc
-            draw.arc([4, 4, size - 4, size - 4], 210, 330, fill=color, width=2)
-
-            # Arrow 1 (Top, pointing left)
-            draw.arc([4, 4, size - 4, size - 4], 20, 160, fill=color, width=2)
-            # Arrowhead at 160 deg (left)
-            # Left side, slightly up
-            draw.polygon(
-                [2, size / 2 - 4, 2, size / 2 + 2, 8, size / 2 - 1], fill=color
-            )
-
-            # Arrow 2 (Bottom, pointing right)
-            draw.arc([4, 4, size - 4, size - 4], 200, 340, fill=color, width=2)
-            # Arrowhead at 340 deg (right)
-            # Right side, slightly down
-            draw.polygon(
-                [
-                    size - 2,
-                    size / 2 + 4,
-                    size - 2,
-                    size / 2 - 2,
-                    size - 8,
-                    size / 2 + 1,
-                ],
-                fill=color,
-            )
-
+        """Draw simple icons using IconPainter"""
+        color = self.theme["accent_color"]
+        img = IconPainter.draw_icon(name, color, size)
         return ImageTk.PhotoImage(img)
 
     def _create_tooltip(self, widget, text):
@@ -502,22 +442,17 @@ class MainWindow:
     def _on_tab_changed(self, event):
         """Auto-scroll to bottom when switching tabs"""
         try:
-            # Get the currently selected tab
             current_tab = self.notebook.select()
             if not current_tab:
                 return
 
-            # Find which server this tab belongs to
             tab_index = self.notebook.index(current_tab)
             server_name = list(self.servers.keys())[tab_index]
 
-            # Get the text widget for this server
             if server_name in self.server_tabs:
                 text_widget = self.server_tabs[server_name].text_widget
-                # Scroll to the bottom
                 text_widget.see(tk.END)
-        except Exception as e:
-            # Fail silently if something goes wrong
+        except Exception:
             pass
 
     def show(self):

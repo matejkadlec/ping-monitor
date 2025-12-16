@@ -34,6 +34,7 @@ class PingService:
 
         self.ping_queue = queue.Queue()
         self.running = True
+        self.ping_thread_started = False
 
     def reset_stats(self, server_name):
         """Reset statistics for a specific server"""
@@ -194,6 +195,10 @@ class PingService:
 
     def start_ping_thread(self):
         """Start the ping monitoring thread"""
+        if self.ping_thread_started:
+            return
+
+        self.ping_thread_started = True
         ping_thread = threading.Thread(target=self.ping_worker_thread, daemon=True)
         ping_thread.start()
 

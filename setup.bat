@@ -15,8 +15,8 @@ if exist "venv" (
     "venv\Scripts\python.exe" --version >nul 2>&1
     if errorlevel 1 (
         echo.
-        echo ⚠️  Detected broken virtual environment.
-        echo 🔄 Cleaning up old environment...
+        echo Detected broken virtual environment.
+        echo Cleaning up old environment...
         rmdir /s /q "venv"
     )
 )
@@ -26,7 +26,7 @@ if not exist "venv" (
     python -m venv venv
     if %errorlevel% neq 0 (
         echo.
-        echo ✗ Failed to create virtual environment. Please make sure Python 3.14.2 is installed and in your PATH.
+        echo Failed to create virtual environment. Please make sure Python 3.14.2 is installed and in your PATH.
         pause
         exit /b 1
     )
@@ -34,7 +34,14 @@ if not exist "venv" (
 
 echo Installing/Updating required packages...
 "venv\Scripts\python.exe" -m pip install --upgrade pip
-"venv\Scripts\pip.exe" install -r requirements.txt
+"venv\Scripts\pip.exe" install --prefer-binary -r requirements.txt
+
+if %errorlevel% neq 0 (
+    echo.
+    echo Failed to install required packages.
+    pause
+    exit /b 1
+)
 
 echo.
 echo Testing package imports...
@@ -42,7 +49,7 @@ echo Testing package imports...
 
 if %errorlevel% neq 0 (
     echo.
-    echo ✗ Package import test failed. Please check the installation.
+    echo Package import test failed. Please check the installation.
     pause
     exit /b 1
 )
