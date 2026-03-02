@@ -3,16 +3,26 @@ Main GUI window for the Ping Monitor application.
 """
 
 import tkinter as tk
-from tkinter import ttk, font, Menu
+from tkinter import ttk, font, Menu, scrolledtext
 import os
-import threading
-from PIL import Image, ImageTk, ImageDraw
-from src.core.config import THEME, BACKGROUND_FILE, DEVIATIONS_FILE, ANIMATION_SETTINGS
+import logging
+from PIL import Image, ImageTk
+from src.core.config import (
+    THEME,
+    BACKGROUND_FILE,
+    PING_SPIKES_FILE,
+    ANIMATION_SETTINGS,
+)
 import src.core.config as config_module
 from src.gui.components.server_tab import ServerTab
 from src.gui.dialogs.first_run import FirstRunDialog
 from src.gui.utils.animations import AnimationUtils
-from src.gui.utils.icon_painter import IconPainter
+from src.gui.utils.toast_manager import ToastManager
+
+try:
+    from ttkbootstrap_icons_fa import FAIcon
+except Exception:
+    FAIcon = None
 
 
 class MainWindow:
@@ -22,6 +32,7 @@ class MainWindow:
         self.servers = servers
         self.app = app_instance
         self.theme = THEME
+        self.logger = logging.getLogger(__name__)
 
         # GUI elements
         self.root = None
@@ -31,6 +42,15 @@ class MainWindow:
         self.bg_image_original = None
         self.bg_image_tk = None
         self.bg_label = None
+        self.overlay_backdrop = None
+        self.overlay_backdrop_image = None
+        self.overlay_backdrop_photo = None
+        self.logs_overlay_frame = None
+        self.logs_window = None
+        self.logs_text_widget = None
+        self.logs_refresh_job = None
+        self.overlay_backdrop_refresh_job = None
+        self.last_logs_content = None
 
         # Resize handling
         self.resize_timer = None
@@ -39,6 +59,7 @@ class MainWindow:
 
         # Utilities
         self.animation_utils = AnimationUtils(THEME, ANIMATION_SETTINGS)
+        self.toast_manager = None
 
         # State flags
         self.updates_paused = False
@@ -82,6 +103,7 @@ class MainWindow:
         self.root = tk.Tk()
         self.root.title("Ping Monitor")
         self.root.geometry("1000x700")
+        self.root.report_callback_exception = self._handle_tk_exception
 
         # Load background image
         bg_path = os.path.join(
@@ -97,7 +119,7 @@ class MainWindow:
                 self.bg_label.place(x=0, y=0, relwidth=1, relheight=1)
                 self.root.bind("<Configure>", self._resize_background)
             except Exception as e:
-                print(f"Error loading background image: {e}")
+                self.logger.exception("Error loading background image: %s", e)
                 self.root.configure(bg=self.theme["bg_color"])
         else:
             self.root.configure(bg=self.theme["bg_color"])
@@ -115,7 +137,7 @@ class MainWindow:
                 self.root.iconbitmap(default=icon_path)
                 self._set_windows_app_id()
             except tk.TclError as e:
-                print(f"Error setting window icon: {e}")
+                self.logger.exception("Error setting window icon: %s", e)
 
         # Configure window visibility based on first run status
         if config_module.CLOSE_TO_TRAY is None:
@@ -135,6 +157,7 @@ class MainWindow:
 
         self._create_main_layout()
         self._create_server_tabs()
+        self.toast_manager = ToastManager(self.root)
         # Note: _start_gui_update_thread is now called after configuration/startup
 
     def _resize_background(self, event):
@@ -216,7 +239,7 @@ class MainWindow:
             myappid = f"matka.pingmonitor.1.2.0"
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
         except Exception as e:
-            print(f"Non-critical error setting app ID: {e}")
+            self.logger.warning("Non-critical error setting app ID: %s", e)
 
     def _create_main_layout(self):
         """Create the main layout with toolbar, content, and footer"""
@@ -236,9 +259,9 @@ class MainWindow:
         toolbar_frame.pack(fill=tk.X, pady=5, padx=5)
 
         self.icons = {
-            "config": self._draw_icon("config"),
-            "logs": self._draw_icon("logs"),
-            "reset": self._draw_icon("reset"),
+            "config": self._draw_icon("gear"),
+            "logs": self._draw_icon("file-lines"),
+            "reset": self._draw_icon("arrow-rotate-left"),
         }
 
         btn_config = tk.Label(
@@ -247,7 +270,7 @@ class MainWindow:
             bg=self.theme["bg_color"],
             cursor="hand2",
         )
-        btn_config.pack(side=tk.LEFT, padx=(5, 2))
+        btn_config.pack(side=tk.LEFT, padx=(5, 1))
         btn_config.bind("<Button-1>", lambda e: self._open_config())
         self._create_tooltip(btn_config, "Open config")
 
@@ -257,7 +280,7 @@ class MainWindow:
             bg=self.theme["bg_color"],
             cursor="hand2",
         )
-        btn_logs.pack(side=tk.LEFT, padx=2)
+        btn_logs.pack(side=tk.LEFT, padx=1)
         btn_logs.bind("<Button-1>", lambda e: self._open_logs())
         self._create_tooltip(btn_logs, "Open logs")
 
@@ -267,15 +290,19 @@ class MainWindow:
             bg=self.theme["bg_color"],
             cursor="hand2",
         )
-        btn_reset.pack(side=tk.LEFT, padx=2)
+        btn_reset.pack(side=tk.LEFT, padx=1)
         btn_reset.bind("<Button-1>", lambda e: self._show_reset_menu(e))
         self._create_tooltip(btn_reset, "Reset metrics")
 
     def _draw_icon(self, name, size=24):
-        """Draw simple icons using IconPainter"""
-        color = self.theme["accent_color"]
-        img = IconPainter.draw_icon(name, color, size)
-        return ImageTk.PhotoImage(img)
+        """Render toolbar icons using Font Awesome icons."""
+        if FAIcon is None:
+            raise RuntimeError(
+                "ttkbootstrap-icons-fa is required for toolbar icon rendering."
+            )
+        return FAIcon(
+            name, size=size, color=self.theme["accent_color"], style="solid"
+        ).image
 
     def _create_tooltip(self, widget, text):
         """Create a simple tooltip for a widget"""
@@ -316,21 +343,149 @@ class MainWindow:
             )
             os.startfile(config_path)
         except Exception as e:
-            print(f"Error opening config: {e}")
+            self.logger.exception("Error opening config: %s", e)
 
     def _open_logs(self):
-        """Open logs file"""
+        """Open in-app logs overlay with ping spikes history."""
         try:
-            log_path = os.path.join(
-                os.path.dirname(
-                    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                ),
-                DEVIATIONS_FILE,
-            )
-            if os.path.exists(log_path):
-                os.startfile(log_path)
+            self._show_logs_overlay()
         except Exception as e:
-            print(f"Error opening logs: {e}")
+            if self.toast_manager:
+                self.toast_manager.show(
+                    f"Unable to open logs overlay: {e}", toast_type="error"
+                )
+            self.logger.exception("Failed to open logs window")
+
+    def _show_logs_overlay(self):
+        """Render logs in a stable modal window."""
+        if self.logs_window and self.logs_window.winfo_exists():
+            self.logs_window.lift()
+            self.logs_window.focus_force()
+            self._refresh_logs_overlay()
+            return
+
+        self._close_logs_overlay(cancel_toast=True)
+        overlay_width = 620
+        overlay_height = 520
+
+        self.logs_window = tk.Toplevel(self.root)
+        self.logs_window.title("Ping spikes logs")
+        self.logs_window.transient(self.root)
+        self.logs_window.resizable(True, True)
+        self.logs_window.minsize(540, 420)
+        self.logs_window.configure(bg=self.theme["bg_color"])
+        self.logs_window.protocol("WM_DELETE_WINDOW", self._close_logs_overlay)
+
+        root_x = self.root.winfo_rootx()
+        root_y = self.root.winfo_rooty()
+        root_w = self.root.winfo_width()
+        root_h = self.root.winfo_height()
+        pos_x = root_x + max(0, (root_w - overlay_width) // 2)
+        pos_y = root_y + max(0, (root_h - overlay_height) // 2)
+        self.logs_window.geometry(f"{overlay_width}x{overlay_height}+{pos_x}+{pos_y}")
+        self.logs_window.lift()
+        self.logs_window.focus_force()
+        self.logs_window.after_idle(self.logs_window.focus_force)
+
+        self.logs_overlay_frame = tk.Frame(
+            self.logs_window,
+            bg=self.theme["log_bg_color"],
+            highlightbackground=self.theme["accent_color"],
+            highlightthickness=1,
+            bd=0,
+        )
+        self.logs_overlay_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+
+        self.logs_text_widget = scrolledtext.ScrolledText(
+            self.logs_overlay_frame,
+            font=("Consolas", 10),
+            bg=self.theme["log_bg_color"],
+            fg=self.theme["log_text_color"],
+            insertbackground=self.theme["log_text_color"],
+            selectbackground="#b3d7ff",
+            wrap=tk.NONE,
+            state=tk.DISABLED,
+            borderwidth=0,
+            padx=10,
+            pady=10,
+        )
+        self.logs_text_widget.pack(fill=tk.BOTH, expand=True)
+
+        self.last_logs_content = None
+        self.logger.info("Logs window opened")
+        self._refresh_logs_overlay()
+
+    def _get_logs_file_path(self):
+        """Resolve ping spikes file path."""
+        return os.path.join(
+            os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            ),
+            PING_SPIKES_FILE,
+        )
+
+    def _refresh_logs_overlay(self):
+        """Reload logs text and schedule periodic refresh while overlay is open."""
+        if not (self.logs_window and self.logs_window.winfo_exists()):
+            return
+
+        log_path = self._get_logs_file_path()
+        if not os.path.exists(log_path):
+            content = "No ping spikes recorded yet."
+        else:
+            try:
+                content = self._read_logs_text(log_path).strip()
+                if not content:
+                    content = "No ping spikes recorded yet."
+            except Exception as error:
+                content = f"Unable to read logs: {error}"
+                if self.toast_manager:
+                    self.toast_manager.show(
+                        "Could not read ping spikes file.", toast_type="error"
+                    )
+
+        if self.logs_text_widget and self.logs_text_widget.winfo_exists():
+            if content != self.last_logs_content:
+                self.logs_text_widget.config(state=tk.NORMAL)
+                self.logs_text_widget.delete(1.0, tk.END)
+                self.logs_text_widget.insert(tk.END, content + "\n")
+                self.logs_text_widget.see(tk.END)
+                self.logs_text_widget.config(state=tk.DISABLED)
+                self.last_logs_content = content
+
+        self.logs_refresh_job = self.root.after(1500, self._refresh_logs_overlay)
+
+    def _close_logs_overlay(self, cancel_toast=False):
+        """Close logs overlay and stop auto-refresh."""
+        if self.logs_refresh_job:
+            try:
+                self.root.after_cancel(self.logs_refresh_job)
+            except Exception:
+                pass
+            self.logs_refresh_job = None
+
+        if self.logs_overlay_frame and self.logs_overlay_frame.winfo_exists():
+            self.logs_overlay_frame.destroy()
+        self.logs_overlay_frame = None
+        self.logs_text_widget = None
+
+        if self.logs_window and self.logs_window.winfo_exists():
+            self.logs_window.destroy()
+        self.logs_window = None
+        self.logger.info("Logs window closed")
+
+    def _read_logs_text(self, log_path):
+        """Read logs using tolerant encoding fallbacks for legacy files."""
+        encodings = ("utf-8", "utf-8-sig", "utf-16", "utf-16-le", "cp1250", "cp1252")
+        for encoding in encodings:
+            try:
+                with open(log_path, "r", encoding=encoding) as file_handle:
+                    return file_handle.read()
+            except UnicodeDecodeError:
+                continue
+
+        with open(log_path, "r", encoding="utf-8", errors="replace") as file_handle:
+            return file_handle.read()
 
     def _show_reset_menu(self, event):
         """Show reset menu"""
@@ -348,15 +503,19 @@ class MainWindow:
         server_name = list(self.servers.keys())[tab_index]
 
         self.app.ping_service.reset_stats(server_name)
+        self.app.reset_server_statistics(server_name)
         # Clear text widget
         if server_name in self.server_tabs:
             self.server_tabs[server_name].reset()
+        self.logger.info("Reset current tab: %s", server_name)
 
     def _reset_all_tabs(self):
         """Reset all tabs stats"""
         self.app.ping_service.reset_all_stats()
+        self.app.reset_all_statistics()
         for server_name in self.server_tabs:
             self.server_tabs[server_name].reset()
+        self.logger.info("Reset all tabs")
 
     def _create_notebook(self, parent):
         """Create the tabbed notebook interface"""
@@ -365,6 +524,8 @@ class MainWindow:
 
         # Bind tab change event to auto-scroll to bottom
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+        self.notebook.bind("<Motion>", self._on_notebook_motion)
+        self.notebook.bind("<Leave>", self._on_notebook_leave)
 
         # Configure ttk styles for modern dark theme
         self._configure_notebook_style()
@@ -455,6 +616,23 @@ class MainWindow:
         except Exception:
             pass
 
+    def _on_notebook_motion(self, event):
+        """Show pointer cursor when hovering inactive tabs."""
+        try:
+            tab_index = self.notebook.index(f"@{event.x},{event.y}")
+            current_tab = self.notebook.select()
+            current_index = self.notebook.index(current_tab) if current_tab else -1
+            if tab_index != current_index:
+                self.notebook.configure(cursor="hand2")
+            else:
+                self.notebook.configure(cursor="")
+        except tk.TclError:
+            self.notebook.configure(cursor="")
+
+    def _on_notebook_leave(self, _event):
+        """Reset notebook cursor on leave."""
+        self.notebook.configure(cursor="")
+
     def show(self):
         """Show the main window"""
         if self.root:
@@ -462,12 +640,14 @@ class MainWindow:
             self.root.lift()
             self.root.focus_force()
             self.window_visible = True
+            self.logger.info("Main window shown")
 
     def hide(self):
         """Hide the main window"""
         if self.root:
             self.root.withdraw()
             self.window_visible = False
+            self.logger.info("Main window hidden")
 
     def is_visible(self):
         """Check if window is visible"""
@@ -481,4 +661,12 @@ class MainWindow:
     def destroy(self):
         """Destroy the window"""
         if self.root:
+            self._close_logs_overlay(cancel_toast=True)
             self.root.destroy()
+
+    def _handle_tk_exception(self, exc_type, exc_value, exc_traceback):
+        """Capture Tk callback exceptions into app logging."""
+        self.logger.exception(
+            "Tk callback exception",
+            exc_info=(exc_type, exc_value, exc_traceback),
+        )

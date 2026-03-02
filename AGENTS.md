@@ -1,66 +1,80 @@
-# 🤖 Agents Documentation
+# Ping Monitor - Agent Guide
 
-This project is maintained with the assistance of AI agents. This file documents the project structure and key components to help future agents understand the codebase quickly.
+This file is for coding agents working on this repository.
 
-## 🏗️ Project Structure
+## Environment And Paths
+
+- Runtime target is **Windows**.
+- Development shell is usually **WSL (Ubuntu/Linux)** inside VS Code.
+- Project is physically stored on Windows at:
+  - `C:\Users\matka\My Drive\python_scripts\ping_monitor`
+- Same path from WSL:
+  - `/mnt/c/Users/matka/My Drive/python_scripts/ping_monitor`
+- Because the folder is mounted in WSL, file access from VS Code + WSL works like a normal Linux workspace.
+
+## Current Structure (important files)
 
 ```
 ping_monitor/
-├── main.py                 # Entry point
-├── run.vbs                 # Windows runner (hidden console)
-├── setup.bat               # Setup script
+├── main.py
+├── run.vbs
+├── setup.bat
 ├── src/
 │   ├── core/
-│   │   ├── config.py       # Configuration constants
-│   │   ├── ping_monitor.py # Main controller class
-│   │   └── ping_service.py # Ping logic & threading
+│   │   ├── config.py
+│   │   ├── ping_monitor.py
+│   │   └── ping_service.py
 │   ├── gui/
-│   │   ├── main_window.py  # Main GUI controller
-│   │   ├── system_tray.py  # System tray icon logic
-│   │   ├── components/     # Reusable GUI components
-│   │   │   └── server_tab.py # Individual server tab logic
-│   │   ├── dialogs/        # Dialog windows
-│   │   │   └── first_run.py  # First run configuration dialog
-│   │   └── utils/          # GUI utilities
-│   │       └── animations.py # Animation logic
+│   │   ├── main_window.py
+│   │   ├── system_tray.py
+│   │   ├── components/server_tab.py
+│   │   ├── dialogs/first_run.py
+│   │   └── utils/
+│   │       └── animations.py
 │   └── utils/
-│       ├── deviation_logger.py # Logging logic
-│       ├── instance_lock.py    # Single instance enforcement
-│       └── statistics.py       # Stats calculation
-└── assets/                 # Images and icons
+│       ├── ping_spike_logger.py
+│       ├── deviation_logger.py   # compatibility alias wrapper
+│       ├── instance_lock.py
+│       └── statistics.py
+├── assets/
+├── README.md
+└── untracked/TODO.md
 ```
 
-## 🧩 Key Components
+## Architecture Summary
 
-### Core
+- `PingMonitor` (`src/core/ping_monitor.py`) orchestrates services, stats, and shutdown lifecycle.
+- `PingService` (`src/core/ping_service.py`) runs ping loops in background threads and pushes results into a queue.
+- `MainWindow` (`src/gui/main_window.py`) owns Tk root, toolbar, tabs, and GUI polling (`root.after`).
+- `ServerTab` (`src/gui/components/server_tab.py`) renders per-server stream and footer stats.
+- `SystemTray` (`src/gui/system_tray.py`) controls tray icon/menu and health status color/title.
+- `PingSpikeLogger` (`src/utils/ping_spike_logger.py`) stores high-ping events to `logs/ping_spikes.log` with cleanup.
 
-- **PingMonitor (`src/core/ping_monitor.py`)**: The central controller. It initializes the GUI, PingService, and SystemTray. It coordinates the startup flow, ensuring configuration is set before background services start.
-- **PingService (`src/core/ping_service.py`)**: Handles the actual pinging of servers in a background thread. It puts results into a queue for the GUI to consume.
-- **Config (`src/core/config.py`)**: Contains all static configuration. `CLOSE_TO_TRAY` is a special variable that can be updated by the app at runtime (and persisted to the file).
+## Data Flow
 
-### GUI
+1. `PingService` pings all configured servers concurrently.
+2. Results are queued (`queue.Queue`).
+3. `MainWindow` periodic callback drains queue and calls `PingMonitor._process_ping_result`.
+4. `PingMonitor` updates statistics + ping spike counters and dispatches to UI.
+5. `ServerTab` renders text and footer metrics.
+6. `SystemTray` updates icon and hover title from first-server health state.
 
-- **MainWindow (`src/gui/main_window.py`)**: The main Tkinter window. It manages the high-level layout and the update loop. It delegates specific tasks to components.
-- **ServerTab (`src/gui/components/server_tab.py`)**: Encapsulates the UI and logic for a single server tab (text widget, status label, updates).
-- **FirstRunDialog (`src/gui/dialogs/first_run.py`)**: Handles the initial setup flow if `CLOSE_TO_TRAY` is not configured.
-- **AnimationUtils (`src/gui/utils/animations.py`)**: Handles smooth scrolling and highlight fading effects.
+## Constraints And Practical Notes
 
-## 🔄 Data Flow
+- Tkinter UI must run in the main thread.
+- Ping command in this app is Windows-style (`ping -n -w`), so app execution should use Windows Python (`run.vbs`).
+- `setup.bat` and `run.vbs` are Windows scripts; do not expect native execution from Linux shell without `cmd.exe /c`.
+- Keep changes focused and minimal; preserve current UX unless task explicitly asks for redesign.
+- Logs UI intentionally uses a separate `Toplevel` window instead of the originally requested in-frame blurred overlay, to preserve stability and allow logs + live metrics side-by-side.
 
-1. `PingService` pings servers in a background thread.
-2. Results are placed in a thread-safe `queue`.
-3. `MainWindow` polls this queue in its main loop (`_start_gui_update_thread`).
-4. Results are dispatched to the appropriate `ServerTab` for display.
-5. `SystemTray` is updated with the status of the first server.
+## Change Workflow For Agents
 
-## 🛠️ Development Notes
+1. Read `untracked/TODO.md` and update task statuses when you start/finish a section.
+2. Prefer incremental patches over broad rewrites.
+3. Validate with quick static/error checks after edits.
+4. Keep naming consistent (`ping_spike`, `healthy/degraded/failing`).
 
-- **Theme**: The app uses a dark theme defined in `config.py`.
-- **Icons**: Icons are drawn programmatically using Pillow (PIL) in `MainWindow` to avoid external dependencies for simple assets.
-- **Threading**: Tkinter runs in the main thread. Network operations run in background threads. `queue` is used for communication.
+## Post-Change Instruction
 
-## 📝 Interaction Guidelines
-
-- **Post-Change Instructions**: After making any changes to the code, always instruct the user on how to apply them:
-  - If dependencies were changed: "Please run `setup.bat` to update dependencies."
-  - Otherwise: "Please run `run.vbs` to start the application."
+- If dependencies changed: ask user to run `setup.bat`.
+- Otherwise: ask user to run `run.vbs`.

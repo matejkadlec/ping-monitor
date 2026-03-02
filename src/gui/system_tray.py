@@ -5,7 +5,6 @@ System tray icon functionality for the Ping Monitor application.
 import os
 import pystray
 from PIL import Image, ImageDraw
-from collections import deque
 
 
 class SystemTray:
@@ -15,16 +14,16 @@ class SystemTray:
         self.app = app_instance
         self.icon_path = icon_path
         self.tray_icon = None
-        self.current_status = "neutral"  # 'green', 'red', or 'neutral'
+        self.current_status = "neutral"
         self.icon_images = {
+            "healthy": None,
+            "degraded": None,
+            "failing": None,
             "green": None,
+            "yellow": None,
             "red": None,
             "neutral": None,
-        }  # Cache for icon images
-
-        # For tracking first server status (used for tray icon color)
-        self.first_server_ping_history = deque(maxlen=10)
-        self.first_ping_received = False
+        }
 
         self._setup_tray()
 
@@ -82,57 +81,40 @@ class SystemTray:
         draw = ImageDraw.Draw(green_img)
         draw.ellipse([4, 4, 28, 28], fill=(0, 255, 0, 255), outline=(0, 150, 0, 255))
         self.icon_images["green"] = green_img
+        self.icon_images["healthy"] = green_img
 
-        # Red - Bad connection
+        # Yellow - Degraded connection
+        yellow_img = Image.new("RGBA", size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(yellow_img)
+        draw.ellipse(
+            [4, 4, 28, 28], fill=(255, 200, 0, 255), outline=(170, 130, 0, 255)
+        )
+        self.icon_images["yellow"] = yellow_img
+        self.icon_images["degraded"] = yellow_img
+
+        # Red - Failing connection
         red_img = Image.new("RGBA", size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(red_img)
         draw.ellipse([4, 4, 28, 28], fill=(255, 0, 0, 255), outline=(150, 0, 0, 255))
         self.icon_images["red"] = red_img
+        self.icon_images["failing"] = red_img
 
-    def update_icon_status(self, server_results, first_server_name):
-        """Update tray icon color based on server results"""
-        if not server_results or first_server_name not in server_results:
-            return
+    def update_health_status(self, health_status):
+        """Update tray icon and tooltip for Healthy/Degraded/Failing states."""
+        if health_status not in {"healthy", "degraded", "failing"}:
+            health_status = "neutral"
 
-        first_server_result = server_results[first_server_name]
-
-        # Record ping result for the first server
-        if (
-            first_server_result["status"] == "success"
-            and first_server_result["time"] is not None
-        ):
-            self.first_server_ping_history.append(first_server_result["time"])
-            self.first_ping_received = True
-
-        # Don't change icon until we have some ping data
-        if not self.first_ping_received:
-            return
-
-        # Determine new status based on recent ping history
-        new_status = self._calculate_status()
-
-        # Update icon if status changed
-        if new_status != self.current_status:
-            self.current_status = new_status
-            if self.tray_icon and self.icon_images.get(new_status):
-                self.tray_icon.icon = self.icon_images[new_status]
+        if health_status != self.current_status:
+            self.current_status = health_status
+            if self.tray_icon and self.icon_images.get(health_status):
+                self.tray_icon.icon = self.icon_images[health_status]
                 self.refresh_menu()
 
-    def _calculate_status(self):
-        """Calculate status based on ping history"""
-        if not self.first_server_ping_history:
-            return "neutral"
-
-        # Count how many of the recent pings are above threshold (60ms)
-        recent_pings = list(self.first_server_ping_history)
-        high_pings = sum(1 for ping in recent_pings if ping > 60)
-        total_pings = len(recent_pings)
-
-        # If more than 30% of recent pings are high, show red
-        if total_pings > 0 and (high_pings / total_pings) > 0.3:
-            return "red"
-        else:
-            return "green"
+        if self.tray_icon:
+            if health_status == "neutral":
+                self.tray_icon.title = "Ping Monitor"
+            else:
+                self.tray_icon.title = f"Ping Monitor - {health_status.title()}"
 
     def refresh_menu(self):
         """Refresh the tray menu to reflect current state"""

@@ -34,7 +34,8 @@ if not exist "venv" (
 
 echo Installing/Updating required packages...
 "venv\Scripts\python.exe" -m pip install --upgrade pip
-"venv\Scripts\pip.exe" install --prefer-binary -r requirements.txt
+"venv\Scripts\python.exe" -m pip install --upgrade uv
+"venv\Scripts\uv.exe" sync --python "venv\Scripts\python.exe" --frozen
 
 if %errorlevel% neq 0 (
     echo.

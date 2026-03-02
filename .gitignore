@@ -10,6 +10,7 @@ build/
 
 # Virtual environment
 venv/
+.venv/
 env/
 ENV/
 
@@ -25,3 +26,5 @@ ping_monitor.lock
 # GitHub
 .github/
 
+# Untracked
+untracked/

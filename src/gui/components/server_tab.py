@@ -28,6 +28,10 @@ class ServerTab:
 
         self.text_widget = None
         self.status_label = None
+        self.overall_prefix_label = None
+        self.overall_value_label = None
+        self.stats_label = None
+        self.pinged_label = None
 
         self._create_tab()
 
@@ -75,14 +79,46 @@ class ServerTab:
         status_frame = tk.Frame(tab_frame, bg=self.theme["bg_color"], height=30)
         status_frame.pack(fill=tk.X, pady=10, padx=5)
 
-        self.status_label = tk.Label(
-            status_frame,
+        left_status_frame = tk.Frame(status_frame, bg=self.theme["bg_color"])
+        left_status_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self.overall_prefix_label = tk.Label(
+            left_status_frame,
+            text="Overall ping: ",
+            bg=self.theme["bg_color"],
+            fg=self.theme["text_color"],
+            font=("Segoe UI", 9),
+        )
+        self.overall_prefix_label.pack(side=tk.LEFT)
+
+        self.overall_value_label = tk.Label(
+            left_status_frame,
+            text="Healthy",
+            bg=self.theme["bg_color"],
+            fg="#00cc66",
+            font=("Segoe UI", 9, "bold"),
+        )
+        self.overall_value_label.pack(side=tk.LEFT)
+
+        self.stats_label = tk.Label(
+            left_status_frame,
             text="",
             bg=self.theme["bg_color"],
             fg=self.theme["text_color"],
             font=("Segoe UI", 9),
         )
-        self.status_label.pack(side=tk.LEFT)
+        self.stats_label.pack(side=tk.LEFT)
+
+        self.pinged_label = tk.Label(
+            status_frame,
+            text="",
+            bg=self.theme["bg_color"],
+            fg=self.theme["text_color"],
+            font=("Segoe UI", 9),
+            width=38,
+            anchor="e",
+        )
+        self.pinged_label.pack(side=tk.RIGHT)
 
     def _create_heavy_ui(self, tab_frame):
         """Deprecated: UI is now created immediately"""
@@ -135,14 +171,44 @@ class ServerTab:
         except tk.TclError:
             pass
 
-        if statistics and self.status_label:
+        if statistics and self.stats_label:
+            overall_status = statistics.get("overall_status", "healthy")
+            status_colors = {
+                "healthy": "#00cc66",
+                "degraded": "#d4b000",
+                "failing": "#cc0000",
+            }
+
+            next_overall_text = overall_status.title()
+            next_overall_fg = status_colors.get(
+                overall_status, self.theme["text_color"]
+            )
+            if (
+                self.overall_value_label.cget("text") != next_overall_text
+                or self.overall_value_label.cget("fg") != next_overall_fg
+            ):
+                self.overall_value_label.config(
+                    text=next_overall_text,
+                    fg=next_overall_fg,
+                )
+
             status_text = (
-                f"Best: {statistics['best']}ms | "
+                f" (Best: {statistics['best']}ms | "
                 f"Worst: {statistics['worst']}ms | "
                 f"Avg: {round(statistics['avg'])}ms | "
-                f"Deviations: {statistics['deviations']}x"
+                f"Ping spikes: {statistics['ping_spikes']}x)"
             )
-            self.status_label.config(text=status_text)
+            if self.stats_label.cget("text") != status_text:
+                self.stats_label.config(text=status_text)
+
+            elapsed_minutes = max(1, statistics.get("elapsed_minutes", 1))
+            minute_word = "minute" if elapsed_minutes == 1 else "minutes"
+            pinged_count = statistics.get("pinged_count", 0)
+            pinged_text = (
+                f"Pinged {pinged_count} times over {elapsed_minutes} {minute_word}."
+            )
+            if self.pinged_label.cget("text") != pinged_text:
+                self.pinged_label.config(text=pinged_text)
 
     def reset(self):
         """Reset the text widget content"""
