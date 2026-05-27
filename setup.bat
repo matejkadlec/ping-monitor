@@ -35,6 +35,7 @@ if not exist "venv" (
 echo Installing/Updating required packages...
 "venv\Scripts\python.exe" -m pip install --upgrade pip
 "venv\Scripts\python.exe" -m pip install --upgrade uv
+set "UV_PROJECT_ENVIRONMENT=%CD%\venv"
 "venv\Scripts\uv.exe" sync --python "venv\Scripts\python.exe" --frozen
 
 if %errorlevel% neq 0 (
@@ -88,5 +89,4 @@ goto final_pause
 
 echo.
 echo Press any key to exit...
-pause >nul
 pause >nul

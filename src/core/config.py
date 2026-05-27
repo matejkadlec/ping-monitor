@@ -10,7 +10,9 @@ SERVERS = {
 }
 
 # Ping configuration
-PING_THRESHOLD = 60  # ms (for deviation logging)
+PING_THRESHOLD_HEALTHY = 50  # ms before the tray/footer status becomes degraded
+PING_THRESHOLD_DEGRADED = 60  # ms before pings are treated as failing/spikes
+PING_THRESHOLD = PING_THRESHOLD_DEGRADED  # Backward-compatible alias
 PING_INTERVAL = 1  # seconds between pings
 PRESERVED_MINUTES = 10  # minutes to preserve and display per tab
 
@@ -28,7 +30,7 @@ THEME = {
 
 # App behavior configuration
 # Set to None to ask user on startup. True = minimize to tray, False = exit app.
-CLOSE_TO_TRAY = None
+CLOSE_TO_TRAY = False
 
 # Animation settings
 ANIMATION_SETTINGS = {
@@ -39,5 +41,6 @@ ANIMATION_SETTINGS = {
 
 # File paths
 DEVIATIONS_FILE = "deviations.txt"
+PING_SPIKES_FILE = "logs/ping_spikes.log"
 ICON_FILE = "assets/icon.ico"
 BACKGROUND_FILE = "assets/background.png"
