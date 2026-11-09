@@ -18,6 +18,7 @@ from src.core.config import (
     ICON_FILE,
     PING_SPIKES_FILE,
 )
+import src.core.config as config_module
 from src.core.ping_service import PingService
 from src.gui.main_window import MainWindow
 from src.gui.system_tray import SystemTray
@@ -114,7 +115,6 @@ class PingMonitor:
         """Start background services (ping, tray, cleanup)"""
         self.logger.info("Starting background services")
         # Start ping service
-        self.ping_service.perform_warmup_pings()
         self.ping_service.start_ping_thread()
 
         # Start system tray in a separate thread
@@ -204,20 +204,29 @@ class PingMonitor:
         }
 
     def _calculate_overall_status(self, server_name, now_timestamp):
-        """Calculate Healthy/Degraded/Failing for the last 5 minutes of data."""
+        """Calculate Healthy/Degraded/Failing from recent history."""
         ping_history = self.ping_time_history[server_name]
         if not ping_history:
             return "healthy"
 
-        window_start = now_timestamp - timedelta(minutes=5)
-        recent_pings = [
-            ping_time
-            for ping_timestamp, ping_time in ping_history
-            if ping_timestamp >= window_start
-        ]
+        first_timestamp = self.first_ping_timestamps.get(server_name)
+        elapsed_seconds = (
+            max(0, (now_timestamp - first_timestamp).total_seconds())
+            if first_timestamp is not None
+            else 0
+        )
 
-        if not recent_pings:
+        if elapsed_seconds < 600:
             recent_pings = [ping_time for _, ping_time in ping_history]
+        else:
+            window_start = now_timestamp - timedelta(minutes=5)
+            recent_pings = [
+                ping_time
+                for ping_timestamp, ping_time in ping_history
+                if ping_timestamp >= window_start
+            ]
+            if not recent_pings:
+                recent_pings = [ping_time for _, ping_time in ping_history]
 
         if any(ping_time > self.ping_threshold_degraded for ping_time in recent_pings):
             return "failing"
@@ -249,6 +258,84 @@ class PingMonitor:
         """Reset monitor-side statistics for all servers."""
         for server_name in self.servers.keys():
             self.reset_server_statistics(server_name)
+
+    def apply_runtime_config(self, runtime_config):
+        """Apply runtime settings, persist them, and restart ping workers."""
+        if self.main_window:
+            self.main_window.begin_bulk_update_visual()
+
+        try:
+            previous_servers = dict(self.servers)
+            saved = config_module.save_runtime_config(runtime_config)
+            applied = config_module.apply_runtime_config(saved)
+
+            self.servers = dict(applied["servers"])
+            self.ping_threshold_healthy = applied["ping_threshold_healthy"]
+            self.ping_threshold_degraded = applied["ping_threshold_degraded"]
+            self.ping_interval = applied["ping_interval"]
+            self.preserved_minutes = applied["preserved_minutes"]
+            self.max_display_lines_per_server = int(
+                self.preserved_minutes * (60 / self.ping_interval)
+            )
+            self.first_server = list(self.servers.keys())[0]
+
+            servers_changed = self.servers != previous_servers
+
+            if servers_changed:
+                old_ping_service = self.ping_service
+                if old_ping_service:
+                    old_ping_service.stop()
+
+                self._reset_statistics_for_new_servers()
+                self.ping_service = PingService(
+                    servers=self.servers,
+                    ping_interval=self.ping_interval,
+                    ping_threshold_healthy=self.ping_threshold_healthy,
+                    ping_threshold_degraded=self.ping_threshold_degraded,
+                    max_display_lines=self.max_display_lines_per_server,
+                )
+                self.ping_service.start_ping_thread()
+            else:
+                if self.ping_service:
+                    self.ping_service.ping_interval = self.ping_interval
+                    self.ping_service.ping_threshold_healthy = (
+                        self.ping_threshold_healthy
+                    )
+                    self.ping_service.ping_threshold_degraded = (
+                        self.ping_threshold_degraded
+                    )
+                    self.ping_service.reset_all_stats()
+                self.reset_all_statistics()
+
+            if self.main_window:
+                if servers_changed:
+                    self.main_window.rebuild_server_tabs(self.servers)
+                else:
+                    self.main_window.clear_server_tab_displays()
+                self.main_window.apply_close_behavior(applied["close_to_tray"])
+
+            if self.system_tray:
+                self.system_tray.update_health_status("neutral")
+        finally:
+            if self.main_window:
+                self.main_window.end_bulk_update_visual()
+
+    def _reset_statistics_for_new_servers(self):
+        self.ping_times = {}
+        self.ping_time_history = {}
+        self.ping_spike_counts = {}
+        self.pinged_counts = {}
+        self.first_ping_timestamps = {}
+        for server_name in self.servers.keys():
+            self.ping_times[server_name] = deque(
+                maxlen=self.max_display_lines_per_server
+            )
+            self.ping_time_history[server_name] = deque(
+                maxlen=self.max_display_lines_per_server
+            )
+            self.ping_spike_counts[server_name] = 0
+            self.pinged_counts[server_name] = 0
+            self.first_ping_timestamps[server_name] = None
 
     def show_window(self, icon=None, item=None):
         """Show the main window"""

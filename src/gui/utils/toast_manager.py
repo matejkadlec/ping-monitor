@@ -42,116 +42,82 @@ class ToastManager:
 
         self.root.update_idletasks()
 
-        toast_width = 360
-        toast_height = 74
+        toast_width = 252
+        toast_height = 52
         margin_x = 16
         margin_y = 16
-        radius = 14
 
-        root_x = self.root.winfo_rootx()
-        root_y = self.root.winfo_rooty()
         root_width = self.root.winfo_width()
         root_height = self.root.winfo_height()
 
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-
-        app_right = root_x + root_width
-        app_bottom = root_y + root_height
-        max_target_x = screen_width - toast_width - margin_x
-        max_target_y = screen_height - toast_height - margin_y
-
         stack_index = len(self.active_toasts)
+        target_x = max(4, root_width - toast_width - margin_x)
+        start_x = root_width + 24
         toast_y = min(
-            root_y + margin_y + (stack_index * (toast_height + 8)),
-            max_target_y,
+            margin_y + (stack_index * (toast_height + 8)),
+            max(4, root_height - toast_height - margin_y),
         )
 
-        target_x = min(app_right - toast_width - margin_x, max_target_x)
-        target_x = max(margin_x, target_x)
-
-        # Start just outside the app edge (not outside monitor), so slide-in is visible in windowed mode.
-        start_x = min(target_x + 64, max_target_x)
-
-        toast = tk.Toplevel(self.root)
-        toast.wm_overrideredirect(True)
-        toast.attributes("-topmost", True)
-        toast.geometry(f"{toast_width}x{toast_height}+{start_x}+{toast_y}")
-        toast.configure(bg="#ff00ff")
-        toast.wm_attributes("-transparentcolor", "#ff00ff")
-
-        canvas = tk.Canvas(
-            toast,
-            width=toast_width,
-            height=toast_height,
-            bg="#ff00ff",
-            highlightthickness=0,
+        toast_frame = tk.Frame(
+            self.root,
+            bg=selected["border"],
             bd=0,
+            highlightthickness=0,
         )
-        canvas.pack(fill=tk.BOTH, expand=True)
+        toast_frame.place(x=start_x, y=toast_y, width=toast_width, height=toast_height)
+        toast_frame.lift()
 
-        self._draw_rounded_rect(
-            canvas,
-            1,
-            1,
-            toast_width - 2,
-            toast_height - 2,
-            radius=radius,
-            fill=selected["bg"],
-            outline=selected["border"],
-            width=1,
+        inner = tk.Frame(
+            toast_frame,
+            bg=selected["bg"],
+            bd=0,
+            highlightthickness=0,
         )
+        inner.place(x=1, y=1, width=toast_width - 2, height=toast_height - 2)
 
-        icon_center_x = 32
-        icon_center_y = toast_height // 2
-        canvas.create_oval(
-            icon_center_x - 13,
-            icon_center_y - 13,
-            icon_center_x + 13,
-            icon_center_y + 13,
-            fill=selected["border"],
-            outline="",
-        )
-        canvas.create_text(
-            icon_center_x,
-            icon_center_y,
+        icon_label = tk.Label(
+            inner,
             text=selected["icon"],
-            fill=selected["fg"],
-            font=("Segoe UI", 12, "bold"),
+            bg=selected["border"],
+            fg=selected["fg"],
+            font=("Segoe UI", 9, "bold"),
+            width=2,
         )
+        icon_label.place(x=8, y=14)
 
-        canvas.create_text(
-            58,
-            toast_height // 2,
+        message_label = tk.Label(
+            inner,
             text=message,
-            fill=selected["fg"],
-            font=("Segoe UI", 11, "bold"),
+            bg=selected["bg"],
+            fg=selected["fg"],
+            font=("Segoe UI", 8, "bold"),
             anchor="w",
-            width=toast_width - 76,
+            justify="left",
+            wraplength=toast_width - 58,
         )
+        message_label.place(x=38, y=8, width=toast_width - 46, height=toast_height - 14)
 
         toast_state = {
-            "window": toast,
+            "window": toast_frame,
             "x": start_x,
             "target_x": target_x,
             "y": toast_y,
             "width": toast_width,
             "height": toast_height,
-            "app_right": app_right,
+            "start_x": start_x,
         }
         self.active_toasts.append(toast_state)
+        toast = toast_frame
 
         def slide_in():
             if not toast.winfo_exists():
                 return
             current_x = toast_state["x"]
             if current_x > toast_state["target_x"]:
-                current_x = max(toast_state["target_x"], current_x - 12)
+                current_x = max(toast_state["target_x"], current_x - 16)
                 toast_state["x"] = current_x
-                toast.geometry(
-                    f"{toast_state['width']}x{toast_state['height']}+{current_x}+{toast_state['y']}"
-                )
-                toast.after(12, slide_in)
+                toast.place(x=current_x, y=toast_state["y"])
+                toast.after(10, slide_in)
             else:
                 toast.after(duration_ms, slide_out)
 
@@ -159,18 +125,12 @@ class ToastManager:
             if not toast.winfo_exists():
                 return
             current_x = toast_state["x"]
-            # Slide slightly right but keep toast within the app bounds.
-            final_x = min(
-                toast_state["target_x"] + 24,
-                toast_state["app_right"] - toast_state["width"] + 8,
-            )
+            final_x = toast_state["start_x"]
             if current_x < final_x:
-                current_x = min(final_x, current_x + 12)
+                current_x = min(final_x, current_x + 16)
                 toast_state["x"] = current_x
-                toast.geometry(
-                    f"{toast_state['width']}x{toast_state['height']}+{current_x}+{toast_state['y']}"
-                )
-                toast.after(12, slide_out)
+                toast.place(x=current_x, y=toast_state["y"])
+                toast.after(10, slide_out)
             else:
                 self._destroy_toast(toast_state)
 
@@ -190,7 +150,7 @@ class ToastManager:
     def _reposition_active_toasts(self):
         """Re-stack active toasts after one disappears."""
         self.root.update_idletasks()
-        base_y = self.root.winfo_rooty() + 16
+        base_y = 16
 
         for index, toast_state in enumerate(self.active_toasts):
             toast = toast_state["window"]
@@ -198,9 +158,7 @@ class ToastManager:
                 continue
             new_y = base_y + (index * (toast_state["height"] + 8))
             toast_state["y"] = new_y
-            toast.geometry(
-                f"{toast_state['width']}x{toast_state['height']}+{toast_state['x']}+{new_y}"
-            )
+            toast.place(x=toast_state["x"], y=new_y)
 
     def _draw_rounded_rect(
         self,

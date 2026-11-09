@@ -84,7 +84,7 @@ class ServerTab:
 
         self.overall_prefix_label = tk.Label(
             left_status_frame,
-            text="Overall ping: ",
+            text="Status: ",
             bg=self.theme["bg_color"],
             fg=self.theme["text_color"],
             font=("Segoe UI", 9),

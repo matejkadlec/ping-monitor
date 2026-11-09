@@ -60,6 +60,9 @@ class PingService:
     def ping_server(self, server_name, ip_address):
         """Ping a single server and return the result"""
         try:
+            ping_timeout_ms = max(500, int(self.ping_interval * 1000))
+            process_timeout_s = max(2, int(self.ping_interval) + 1)
+
             # Set up subprocess to hide the console window
             startupinfo = None
             if os.name == "nt":  # Windows
@@ -69,10 +72,10 @@ class PingService:
 
             # Use Windows ping command with specific options
             result = subprocess.run(
-                ["ping", "-n", "1", "-w", "5000", ip_address],
+                ["ping", "-n", "1", "-w", str(ping_timeout_ms), ip_address],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=process_timeout_s,
                 startupinfo=startupinfo,  # Add this to hide command window
             )
 
@@ -177,20 +180,7 @@ class PingService:
 
     def perform_warmup_pings(self):
         """Perform warm-up pings to establish network connections"""
-        self.logger.info("Performing warm-up pings")
-        try:
-            # Ping each server once without recording results
-            for server_name, ip_address in self.servers.items():
-                # Just ping once and ignore the result
-                _ = self.ping_server(server_name, ip_address)
-
-            # Add a small delay to let the network settle
-            time.sleep(1)
-            self.logger.info("Warm-up pings completed")
-        except Exception as e:
-            self.logger.exception("Error during warm-up pings: %s", e)
-            # Continue with the application even if warm-up fails
-            pass
+        self.logger.info("Warm-up phase skipped to start pinging immediately")
 
     def ping_worker_thread(self):
         """Backward-compatible entrypoint for older integrations."""
@@ -225,15 +215,7 @@ class PingService:
                 result["timestamp"] = datetime.now()
                 self.ping_queue.put(result)
 
-                next_tick += self.ping_interval
-                current_after_ping = time.perf_counter()
-
-                # If the ping took too long, skip overdue ticks instead of burst-catchup.
-                if current_after_ping > next_tick:
-                    overdue_intervals = (
-                        int((current_after_ping - next_tick) // self.ping_interval) + 1
-                    )
-                    next_tick += overdue_intervals * self.ping_interval
+                next_tick = time.perf_counter() + max(0.2, self.ping_interval)
 
         except Exception as e:
             self.logger.exception("Ping worker thread error (%s): %s", server_name, e)

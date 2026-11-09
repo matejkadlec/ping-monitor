@@ -73,6 +73,13 @@ ping_monitor/
 2. Prefer incremental patches over broad rewrites.
 3. Validate with quick static/error checks after edits.
 4. Keep naming consistent (`ping_spike`, `healthy/degraded/failing`).
+5. When debugging bugs/regressions, inspect `logs/app.log` early to confirm actual runtime errors and timing behavior before changing code.
+
+## Response Handoff Requirement
+
+- End responses with a concise summary (short paragraph and/or compact bullet list) focused on what changed and what remains.
+- Do not include exact file/line references in this handoff summary.
+- If any requirement was intentionally not implemented or implemented differently, call it out clearly and briefly.
 
 ## Post-Change Instruction
 
