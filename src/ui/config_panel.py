@@ -160,7 +160,8 @@ class ConfigPanel(Panel):
         scroll.setVerticalScrollBar(SmoothScrollBar(scroll))
         scroll.setWidget(body)
         self._scroll = scroll
-        self.themed(scroll, scroll.updateGeometry)  # new fonts: new content height
+        # New fonts mean a new content height, known once the other handlers ran.
+        self.themed(scroll, lambda: QTimer.singleShot(0, scroll, scroll.updateGeometry))
         self.outer.addWidget(scroll, 1)
 
         footer = QHBoxLayout()

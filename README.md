@@ -67,8 +67,8 @@ While a panel (Config, Logs, a question) is open, `Tab` stays inside it and the 
 ### Notifications
 
 - "*server* is failing" once per incident, at most every 5 minutes. If the server keeps having problems after those 5 minutes, the notification comes then.
-- "*server* is healthy again" when its health is back to green and its last lost or slow ping is at least a minute old, so a connection that flaps around the limit does not keep notifying.
-- Lost pings in the first minute after the app starts or the PC wakes from sleep (Wi-Fi is often still reconnecting) and in the 30 seconds after you save the config never cause a "failing" notification; problems that go on after that still do.
+- "*server* is healthy again" when its health is back to green and its last lost ping or spike is at least a minute old, so a connection that flaps around the limit does not keep notifying.
+- Lost pings and spikes in the first minute after the app starts or the PC wakes from sleep (Wi-Fi is often still reconnecting) and in the 30 seconds after you save the config never cause a "failing" notification; problems that go on after that still do.
 
 ## ⚙️ Configuration
 

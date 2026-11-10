@@ -276,5 +276,26 @@ def test_enter_clicks_a_focused_button(qapp):
 def test_toasts_paint_their_own_shadow(qapp, controller):
     controller.window.toasts.success("Saved.")
     toast = controller.window.toasts._toasts[0]
+    from PySide6.QtCore import Qt
+
     assert toast.graphicsEffect() is None  # no effect to re-render on every countdown tick
-    assert toast.width() > toast.card.width()
+    assert toast.size() == toast.card  # only the card takes hover and clicks
+    assert toast.shadow.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+
+def test_a_held_enter_never_answers_a_dialog(qapp, controller):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+
+    panel = open_panel(qapp, controller)
+    count = len(panel._rows)
+    held = QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier, "", True)
+    panel._rows[0].delete.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Return,
+                                                  Qt.KeyboardModifier.NoModifier))
+    pump(qapp, 0.3)
+    dialog = controller.window.overlay.top_panel()
+    assert isinstance(dialog, ConfirmDialog)
+    dialog.yes_button.keyPressEvent(held)  # the key is still down from the trash button
+    dialog.keyPressEvent(held)
+    pump(qapp, 0.3)
+    assert controller.window.overlay.top_panel() is dialog and len(panel._rows) == count

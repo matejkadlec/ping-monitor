@@ -81,7 +81,11 @@ class Tween(QObject):
 
 
 def press_on_enter(button: QAbstractButton, event) -> bool:
-    """Enter / Return clicks a focused button (Qt buttons only react to Space)."""
+    """Enter / Return clicks a focused button (Qt buttons only react to Space).
+    A held key (auto-repeat) never clicks: it would answer the next dialog too."""
+    if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and event.isAutoRepeat():
+        event.accept()
+        return True
     if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and button.isEnabled():
         button.click()
         event.accept()

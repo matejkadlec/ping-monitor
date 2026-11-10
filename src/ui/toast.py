@@ -3,9 +3,10 @@ Toast notifications: slide in from the right edge of the window, stay for a
 few seconds (paused while hovered), then glide out. Types: success, warning,
 error, info.
 
-The shadow is painted (no QGraphicsDropShadowEffect): the countdown line then
-only repaints its own few pixels, which matters over the blurred background
-of an open panel.
+The shadow is painted by a sibling widget that ignores the mouse (no
+QGraphicsDropShadowEffect, and only the card itself reacts to hover and
+clicks). While a panel is open, every repaint of a toast re-renders the
+blurred background below it, so the countdown line then ticks slower.
 """
 
 from PySide6.QtCore import QElapsedTimer, QPoint, QRectF, QSize, Qt, QTimer
@@ -25,6 +26,33 @@ KINDS = {
 DEFAULT_DURATION_MS = 3200
 MAX_TOASTS = 4
 SHADOW_MARGIN = 20  # (scaled) px around the card for the painted shadow
+TICK_MS = 40
+TICK_UNDER_PANEL_MS = 250
+
+
+class _ToastShadow(QWidget):
+    """Soft shadow behind a toast card; transparent for the mouse."""
+
+    def __init__(self, toast: "Toast") -> None:
+        super().__init__(toast.parentWidget())
+        self._toast = toast
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setOpacity(self._toast.presence())
+        painter.setPen(Qt.PenStyle.NoPen)
+        margin = self._toast.shadow_margin()
+        card = QRectF(self.rect()).adjusted(margin, margin, -margin, -margin).translated(0, THEME.px(6))
+        radius = THEME.px(12)
+        steps = 8
+        for step in range(steps, 0, -1):
+            spread = THEME.px(2) * step
+            shade = QColor(0, 0, 0)
+            shade.setAlphaF(0.05 * (1 - step / (steps + 1)) + 0.012)
+            painter.setBrush(shade)
+            painter.drawRoundedRect(card.adjusted(-spread, -spread, spread, spread), radius + spread, radius + spread)
 
 
 class Toast(QWidget):
@@ -40,12 +68,13 @@ class Toast(QWidget):
         self._presence = Tween(self, self._presence_changed, value=0.0, duration=260)
         self._y = Tween(self, self._reposition, value=0.0, duration=THEME.NORMAL)
         self._timer = QTimer(self)
-        self._timer.setInterval(40)
+        self._timer.setInterval(TICK_MS)
         self._timer.timeout.connect(self._tick)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("Click to dismiss")
         self.card = self._card_size()
-        self.resize(self.sizeHint())
+        self.resize(self.card)
+        self.shadow = _ToastShadow(self)
 
     # -------------------------------------------------------------- layout
     def _font(self) -> QFont:
@@ -58,16 +87,17 @@ class Toast(QWidget):
         text_rect = metrics.boundingRect(0, 0, text_width, 1000, int(Qt.TextFlag.TextWordWrap), self.message)
         return QSize(width, max(THEME.px(52), text_rect.height() + THEME.px(30)))
 
-    def _margin(self) -> int:
+    def shadow_margin(self) -> int:
         return THEME.px(SHADOW_MARGIN)
 
+    def presence(self) -> float:
+        return self._presence.value
+
     def sizeHint(self) -> QSize:
-        margin = self._margin()
-        return QSize(self.card.width() + 2 * margin, self.card.height() + 2 * margin)
+        return self.card
 
     def _card_rect(self) -> QRectF:
-        margin = self._margin()
-        return QRectF(self.rect()).adjusted(margin + 0.5, margin + 0.5, -margin - 0.5, -margin - 0.5)
+        return QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
 
     def _bar_rect(self) -> QRectF:
         card = self._card_rect()
@@ -84,21 +114,28 @@ class Toast(QWidget):
 
     def _reposition(self) -> None:
         host = self.manager.host
-        margin, shadow = THEME.px(18), self._margin()
         slide = (1.0 - self._presence.value) * THEME.px(36)
-        x = host.width() - self.card.width() - margin - shadow + round(slide)
-        self.move(QPoint(x, round(self._y.value) - shadow))
+        x = host.width() - self.card.width() - THEME.px(18) + round(slide)
+        self.move(QPoint(x, round(self._y.value)))
+        margin = self.shadow_margin()
+        self.shadow.setGeometry(self.geometry().adjusted(-margin, -margin, margin, margin))
 
     def _presence_changed(self) -> None:
         self._reposition()
         self.update()
+        self.shadow.update()
         if self._closing and self._presence.value <= 0.001:
             self.manager._remove(self)
 
+    def raise_with_shadow(self) -> None:
+        self.raise_()
+        self.shadow.stackUnder(self)
+
     # ------------------------------------------------------------ lifetime
     def appear(self) -> None:
+        self.shadow.show()
         self.show()
-        self.raise_()
+        self.raise_with_shadow()
         self._presence.to(1.0)
         self._clock.start()
         self._timer.start()
@@ -119,6 +156,9 @@ class Toast(QWidget):
     def _tick(self) -> None:
         if self._remaining_fraction() <= 0:
             self.dismiss()
+        interval = TICK_MS if THEME.ambient else TICK_UNDER_PANEL_MS
+        if self._timer.interval() != interval:
+            self._timer.setInterval(interval)
         self.update(self._bar_rect().toAlignedRect().adjusted(-1, -1, 1, 1))  # just the countdown line
 
     def enterEvent(self, event) -> None:
@@ -133,8 +173,7 @@ class Toast(QWidget):
         super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:
-        if self._card_rect().contains(event.position()):
-            self.dismiss()
+        self.dismiss()
         event.accept()
 
     # --------------------------------------------------------------- paint
@@ -147,15 +186,6 @@ class Toast(QWidget):
         painter.setOpacity(self._presence.value)
         rect = self._card_rect()
         radius = THEME.px(12)
-        painter.setPen(Qt.PenStyle.NoPen)
-        shadow = rect.translated(0, THEME.px(6))
-        steps = 8
-        for step in range(steps, 0, -1):
-            spread = THEME.px(2) * step
-            shade = QColor(0, 0, 0)
-            shade.setAlphaF(0.05 * (1 - step / (steps + 1)) + 0.012)
-            painter.setBrush(shade)
-            painter.drawRoundedRect(shadow.adjusted(-spread, -spread, spread, spread), radius + spread, radius + spread)
         path = QPainterPath()
         path.addRoundedRect(rect, radius, radius)
         painter.fillPath(path, QColor(c.raised))
@@ -218,8 +248,8 @@ class ToastManager:
         self.show(message, "error", 4200)
 
     def raise_all(self) -> None:
-        for toast in self._toasts:
-            toast.raise_()
+        for toast in reversed(self._toasts):
+            toast.raise_with_shadow()
 
     def _relayout(self, skip: Toast | None = None) -> None:
         y = THEME.px(18)
@@ -231,8 +261,9 @@ class ToastManager:
     def _remove(self, toast: Toast) -> None:
         if toast in self._toasts:
             self._toasts.remove(toast)
-            toast.hide()
-            toast.deleteLater()
+            for widget in (toast.shadow, toast):
+                widget.hide()
+                widget.deleteLater()
             self._relayout()
 
     def reposition(self) -> None:

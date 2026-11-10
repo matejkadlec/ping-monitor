@@ -363,8 +363,9 @@ class ConfirmDialog(Panel):
 
     def keyPressEvent(self, event) -> None:
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            focused = self.focusWidget()
-            self._answer(focused is not self.no_button)
+            if not event.isAutoRepeat():  # a key still held from the previous step is no answer
+                focused = self.focusWidget()
+                self._answer(focused is not self.no_button)
             return
         super().keyPressEvent(event)
 
