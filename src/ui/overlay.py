@@ -120,6 +120,9 @@ class _Layer(QWidget):
         self.panel = panel
         self._dim = dim
         self._rise = Tween(self, self._place_panel, value=1.0, duration=THEME.SLOW)
+        # Size changes of the panel (rows added or removed) glide from this size.
+        self._resize = Tween(self, self._place_panel, value=1.0, duration=THEME.NORMAL)
+        self._resize_from: tuple[int, int] | None = None
         panel.setParent(self)
         panel.installEventFilter(self)
         self.setGeometry(host.rect())
@@ -128,13 +131,32 @@ class _Layer(QWidget):
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt naming
         # The panel's content changed size (rows added, scale changed): re-place it.
         if watched is self.panel and event.type() == QEvent.Type.LayoutRequest:
-            QTimer.singleShot(0, self, self._place_panel)
+            QTimer.singleShot(0, self, self._content_resized)
         return False
 
-    def _place_panel(self) -> None:
+    def _target_size(self) -> tuple[int, int]:
         margin = THEME.px(28)
         width = min(self.panel.preferred_width(), self.width() - 2 * margin)
         height = min(self.panel.sizeHint().height(), self.height() - 2 * margin)
+        return width, height
+
+    def _content_resized(self) -> None:
+        current = (self.panel.width(), self.panel.height())
+        if self._target_size() == current:
+            return
+        if self._rise.running or not THEME.motion or not self.isVisible():
+            self._place_panel()
+            return
+        self._resize_from = current
+        self._resize.jump(0.0)
+        self._resize.to(1.0)
+
+    def _place_panel(self) -> None:
+        width, height = self._target_size()
+        progress = self._resize.value
+        if self._resize_from is not None and progress < 1.0:
+            width = round(self._resize_from[0] + (width - self._resize_from[0]) * progress)
+            height = round(self._resize_from[1] + (height - self._resize_from[1]) * progress)
         x = (self.width() - width) // 2
         y = (self.height() - height) // 2 + round(THEME.px(14) * self._rise.value)
         self.panel.setGeometry(QRect(x, y, width, height))
@@ -248,7 +270,10 @@ class OverlayHost(QWidget):
             if last and not self._layers:
                 self.hide()
             elif self._layers:
-                self._layers[-1].panel.setFocus()
+                top = self._layers[-1]
+                focused = self.window().focusWidget()
+                if focused is None or not top.isAncestorOf(focused):
+                    top.panel.setFocus()  # but never take it back from a field clicked meanwhile
             if on_closed:
                 on_closed()
 

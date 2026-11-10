@@ -160,6 +160,7 @@ class ConfigPanel(Panel):
         scroll.setVerticalScrollBar(SmoothScrollBar(scroll))
         scroll.setWidget(body)
         self._scroll = scroll
+        self.themed(scroll, scroll.updateGeometry)  # new fonts: new content height
         self.outer.addWidget(scroll, 1)
 
         footer = QHBoxLayout()
@@ -426,7 +427,7 @@ class ConfigPanel(Panel):
         if index + 1 < len(self._rows):
             self._rows[index + 1].name.setFocus()
         elif self.save_button.isEnabled():
-            self.save_button.setFocus()  # Enter again saves
+            self.save_button.setFocus()  # Enter again saves (buttons click on Enter)
 
     # -------------------------------------------------------------- state
     def _collect(self) -> Settings | None:

@@ -246,3 +246,35 @@ def test_ambient_animations_stop_while_a_panel_is_open(qapp, controller):
         controller._on_result(PingResult(server.name, server.host, datetime.now(), PingStatus.OK, 20))
         pump(qapp, 0.1)
     assert not page.stream.view._fresh_timer.isActive()
+
+
+def test_a_closing_dialog_does_not_take_the_focus_back(qapp, controller):
+    panel = open_panel(qapp, controller)
+    panel._rows[0].delete.click()
+    pump(qapp, 0.3)
+    dialog = controller.window.overlay.top_panel()
+    dialog.no_button.click()
+    panel._rows[1].name.setFocus()  # clicked into a field while the dialog fades out
+    pump(qapp, 0.4)
+    assert controller.window.focusWidget() is panel._rows[1].name
+
+
+def test_enter_clicks_a_focused_button(qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+
+    from src.ui.controls import IconButton, TextButton
+
+    for button in (TextButton("Save", "primary"), IconButton("x", "Close")):
+        clicks = []
+        button.clicked.connect(lambda: clicks.append(1))
+        button.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier))
+        assert clicks == [1]
+        button.deleteLater()
+
+
+def test_toasts_paint_their_own_shadow(qapp, controller):
+    controller.window.toasts.success("Saved.")
+    toast = controller.window.toasts._toasts[0]
+    assert toast.graphicsEffect() is None  # no effect to re-render on every countdown tick
+    assert toast.width() > toast.card.width()

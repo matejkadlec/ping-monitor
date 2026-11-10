@@ -80,6 +80,15 @@ class Tween(QObject):
         return self._animation.state() == QVariantAnimation.State.Running
 
 
+def press_on_enter(button: QAbstractButton, event) -> bool:
+    """Enter / Return clicks a focused button (Qt buttons only react to Space)."""
+    if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and button.isEnabled():
+        button.click()
+        event.accept()
+        return True
+    return False
+
+
 def _ancestor_has_effect(widget: QWidget) -> bool:
     parent = widget.parentWidget()
     while parent is not None:
@@ -198,6 +207,10 @@ class IconButton(QAbstractButton):
         self._press.to(0.0)
         super().mouseReleaseEvent(event)
 
+    def keyPressEvent(self, event) -> None:
+        if not press_on_enter(self, event):
+            super().keyPressEvent(event)
+
     def paintEvent(self, _event) -> None:
         c = THEME.colors
         painter = QPainter(self)
@@ -276,6 +289,10 @@ class TextButton(QAbstractButton):
     def leaveEvent(self, event) -> None:
         self._hover.to(0.0)
         super().leaveEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if not press_on_enter(self, event):
+            super().keyPressEvent(event)
 
     def paintEvent(self, _event) -> None:
         c = THEME.colors
