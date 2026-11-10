@@ -5,9 +5,9 @@ Per-server ping history with rolling statistics and health evaluation.
   ``preserved_minutes`` (or everything when preserving forever, capped for
   safety). Best/worst/average/jitter/loss/spikes describe this window and are
   maintained incrementally (O(1) per ping), so long sessions stay cheap.
-* Health uses a fixed 5-minute window: a server becomes Degraded after 3 pings
-  above the healthy threshold and Failing after 3 pings above the degraded
-  threshold. Lost pings (timeouts, unreachable, errors) count as both.
+* Health (Healthy / Degraded / Failing and why) comes from ``HealthWindow``
+  (see health.py): loss rate, outages, slow pings, spikes and jitter of the
+  last few minutes.
 * Session counters (pings, spikes, losses, duration) cover everything since the
   start or the last reset.
 
@@ -17,10 +17,9 @@ All windows use epoch seconds, so daylight-saving changes never distort them.
 from collections import deque
 from dataclasses import dataclass
 
+from src.core.health import HealthReport, HealthWindow
 from src.core.models import HealthStatus, PingResult, PingStatus
 
-STATUS_WINDOW_SECONDS = 5 * 60
-STATUS_HIT_THRESHOLD = 3
 # Hard cap for "preserve forever" (~2.3 days at one ping per second, per server).
 MAX_SAMPLES = 200_000
 
@@ -62,16 +61,14 @@ def _is_ok(result: PingResult) -> bool:
 
 
 class ServerHistory:
-    def __init__(self, preserved_minutes: int, healthy_ms: int, degraded_ms: int) -> None:
+    def __init__(self, preserved_minutes: int, healthy_ms: int, degraded_ms: int, interval_s: float = 1.0) -> None:
         self._preserved_minutes = preserved_minutes
         self._healthy = healthy_ms
         self._degraded = degraded_ms
         self.results: deque[PingResult] = deque()
         self.counters = SessionCounters()
         self._reset_window()
-        self._status_window: deque[PingResult] = deque()
-        self._over_healthy = 0
-        self._over_degraded = 0
+        self._health = HealthWindow(healthy_ms, degraded_ms, interval_s)
         self._last_result: PingResult | None = None
 
     # --------------------------------------------------------------- settings
@@ -92,9 +89,12 @@ class ServerHistory:
             return
         self._healthy = healthy_ms
         self._degraded = degraded_ms
-        self._over_healthy = sum(self._is_over(r, healthy_ms) for r in self._status_window)
-        self._over_degraded = sum(self._is_over(r, degraded_ms) for r in self._status_window)
+        self._health.set_thresholds(healthy_ms, degraded_ms)
         self._spikes = sum(1 for r in self.results if _is_ok(r) and r.rtt_ms > degraded_ms)
+
+    def set_interval(self, interval_s: float) -> None:
+        """The health window covers at least 20 pings, so it depends on the interval."""
+        self._health.set_interval(interval_s)
 
     def set_preserved_minutes(self, minutes: int) -> int:
         """Change the window; returns how many results were dropped from the front."""
@@ -119,31 +119,25 @@ class ServerHistory:
                 counters.lost += 1
             elif result.rtt_ms is not None and result.rtt_ms > self._degraded:
                 counters.spikes += 1
-            self._status_window.append(result)
-            self._over_healthy += self._is_over(result, self._healthy)
-            self._over_degraded += self._is_over(result, self._degraded)
-
-        self._trim_status_window(result.epoch)
+        self._health.add(result)
         return self._trim()
 
     def reset(self) -> None:
         self.results.clear()
         self.counters = SessionCounters()
         self._reset_window()
-        self._status_window.clear()
-        self._over_healthy = 0
-        self._over_degraded = 0
+        self._health.reset()
         self._last_result = None
 
     # ---------------------------------------------------------------- queries
     def health(self) -> HealthStatus:
-        if not self._status_window:
-            return HealthStatus.UNKNOWN
-        if self._over_degraded >= STATUS_HIT_THRESHOLD:
-            return HealthStatus.FAILING
-        if self._over_healthy >= STATUS_HIT_THRESHOLD:
-            return HealthStatus.DEGRADED
-        return HealthStatus.HEALTHY
+        return self._health.report().status
+
+    def health_report(self) -> HealthReport:
+        return self._health.report()
+
+    def health_window_seconds(self) -> float:
+        return self._health.window_seconds()
 
     def window_stats(self) -> WindowStats:
         return WindowStats(
@@ -247,18 +241,3 @@ class ServerHistory:
             self._pop_window()
             dropped += 1
         return dropped
-
-    # ------------------------------------------------------- status internals
-    @staticmethod
-    def _is_over(result: PingResult, threshold: int) -> bool:
-        if result.status.is_lost:
-            return True
-        return result.rtt_ms is not None and result.rtt_ms > threshold
-
-    def _trim_status_window(self, now_epoch: float) -> None:
-        cutoff = now_epoch - STATUS_WINDOW_SECONDS
-        window = self._status_window
-        while window and window[0].epoch < cutoff:
-            old = window.popleft()
-            self._over_healthy -= self._is_over(old, self._healthy)
-            self._over_degraded -= self._is_over(old, self._degraded)

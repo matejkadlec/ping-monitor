@@ -20,10 +20,10 @@ A ping monitor that sits in your system tray and keeps an eye on your connection
   - Green (healthy), yellow (degraded), red (failing) or grey (waiting for pings), based on the **first** server
   - Tooltip with the latest ping of every server, left click shows or hides the window
   - Optional Windows notification when the first server starts failing and when it is healthy again (see below)
-- 🩺 **Health rules** (last 5 minutes; a lost ping counts as above both thresholds)
-  - 🟢 Healthy: fewer than 3 pings above the healthy threshold or lost
-  - 🟡 Degraded: 3 or more pings above the healthy threshold or lost
-  - 🔴 Failing: 3 or more pings above the degraded threshold or lost
+- 🩺 **Health rules** (the last 3 minutes, at least 20 pings; hover the status pill to see why)
+  - 🔴 Failing: an outage (the last 3 pings lost), 10 % or more of the pings lost, 20 % or more of the pings above the degraded threshold, or jitter of at least half the degraded threshold
+  - 🟡 Degraded: 2 % or more of the pings lost, 3 or more spikes above the degraded threshold, 10 % or more of the pings above the healthy threshold, or jitter of at least half the healthy threshold
+  - 🟢 Healthy: everything else. A single lost ping or spike never changes the status (rates count only from 3 lost or slow pings)
 - 🎯 **Accurate measuring**
   - Native Windows ICMP (the same API `ping.exe` uses), no console windows, no admin rights
   - All servers are pinged in parallel on a fixed clock grid, so timestamps never drift or skip
@@ -34,7 +34,7 @@ A ping monitor that sits in your system tray and keeps an eye on your connection
   - Crash safe: an unexpectedly closed session is archived on the next start
   - The lists show the newest 20,000 entries; everything stays in the log files
 - ⚙️ **In-app config**: servers (with automatic IP lookup), thresholds, interval, preserved minutes, close to tray, notifications, background picture, start with Windows
-- 🎨 **Modern UI**: dark theme with Montserrat, smooth fades instead of flashes, scales up in full screen
+- 🎨 **Modern UI**: dark theme with Montserrat, smooth fades instead of flashes; maximized, the chart and the ping stream get the extra room (more rows), text keeps its size
 - 🪟 **One instance**: starting the app again just brings the running window to the front
 
 ## 🛠️ Installation

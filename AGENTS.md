@@ -23,7 +23,8 @@ ping-monitor/
 │   │   ├── models.py        # PingResult, PingStatus, HealthStatus, LatencyLevel, ServerSpec
 │   │   ├── pinger.py        # Windows IcmpSendEcho (ctypes), ping-command fallback, simulator
 │   │   ├── engine.py        # PingEngine: one worker thread per server on a wall-clock grid
-│   │   ├── stats.py         # ServerHistory: window stats (O(1)), health, session counters
+│   │   ├── stats.py         # ServerHistory: window stats (O(1)), session counters
+│   │   ├── health.py        # HealthWindow: Healthy / Degraded / Failing and why
 │   │   ├── spike_log.py     # current / previous session logs
 │   │   ├── alerts.py        # when to notify "failing" / "healthy again"
 │   │   ├── settings.py      # Settings dataclass, validation, JSON persistence
@@ -67,7 +68,7 @@ ping-monitor/
 
 ## UI Conventions
 
-- Colors, fonts, sizes and durations come from `THEME` (`theme.py`); sizes go through `THEME.px()` so the UI scales between windowed and full screen.
+- Colors, fonts, sizes and durations come from `THEME` (`theme.py`); sizes go through `THEME.px()`. The scale stays 1.0 in every window size on purpose (maximizing gives the chart and the stream more room, not bigger text); `THEME.set_scale()` remains as a hook, so keep sizes scale-aware.
 - **Anything clickable shows the pointer (hand) cursor on hover.** Info icons use the help cursor.
 - No instant state changes: hovers, shows/hides and color changes fade or glide (`Tween`, `fade()`, `THEME.duration()` returns 0 when Windows animations are off). Ambient motion pauses while an overlay is open.
 - Text uses the text colors; green/yellow/red only mark status (with a label or value next to them).

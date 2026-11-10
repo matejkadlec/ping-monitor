@@ -7,7 +7,8 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from src.core.models import HealthStatus, PingResult
-from src.core.stats import STATUS_HIT_THRESHOLD, STATUS_WINDOW_SECONDS, ServerHistory
+from src.core.health import HealthReport
+from src.core.stats import ServerHistory
 from src.ui.controls import Tween, fade
 from src.ui.latency_chart import LatencyChart, window_label
 from src.ui.ping_stream import PingStream
@@ -47,13 +48,23 @@ class StatusPill(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         THEME.changed.connect(self.updateGeometry)
 
-    def set_status(self, status: HealthStatus, thresholds: tuple[int, int]) -> None:
+    def set_status(self, report: HealthReport, thresholds: tuple[int, int], window_seconds: float) -> None:
+        status = report.status
         healthy, degraded = thresholds
-        minutes = STATUS_WINDOW_SECONDS // 60
+        minutes = round(window_seconds / 60)
+        if status is HealthStatus.UNKNOWN:
+            now = "Waiting for pings."
+        elif report.reasons:
+            now = f"{status.value.title()}: {report.summary()} (last {minutes} min)."
+        else:
+            now = f"Healthy: no problems in the last {minutes} minutes."
         self.setToolTip(
-            f"Healthy: fewer than {STATUS_HIT_THRESHOLD} pings above {healthy} ms in the last {minutes} minutes.\n"
-            f"Degraded: {STATUS_HIT_THRESHOLD}+ pings above {healthy} ms.\n"
-            f"Failing: {STATUS_HIT_THRESHOLD}+ pings above {degraded} ms or lost."
+            f"{now}\n\n"
+            f"Failing: the last 3 pings lost, 10 %+ of pings lost, 20 %+ above {degraded} ms "
+            f"or jitter {degraded // 2}+ ms.\n"
+            f"Degraded: 2 %+ of pings lost, 3+ spikes above {degraded} ms, 10 %+ above {healthy} ms "
+            f"or jitter {healthy // 2}+ ms.\n"
+            "A single lost ping or spike never changes the status."
         )
         if status == self._status:
             return
@@ -242,7 +253,7 @@ class ServerPage(QWidget):
 
     def refresh_summary(self) -> None:
         history = self.history
-        self._pill.set_status(history.health(), history.thresholds)
+        self._pill.set_status(history.health_report(), history.thresholds, history.health_window_seconds())
         stats = history.window_stats()
         loss = "–" if not stats.samples else (f"{stats.loss_percent:.1f} %" if stats.lost else "0 %")
         values = {

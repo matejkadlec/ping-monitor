@@ -102,26 +102,25 @@ def test_incremental_stats_match_brute_force():
     assert_matches_brute(history, 40)
 
 
-def test_health_needs_three_hits():
+def test_health_comes_from_the_health_window():
     history = ServerHistory(preserved_minutes=10, healthy_ms=40, degraded_ms=60)
     assert history.health() is HealthStatus.UNKNOWN
-    history.add(ok(0, 20))
-    assert history.health() is HealthStatus.HEALTHY
-    history.add(ok(1, 75))
-    history.add(ok(2, 90))
+    for i in range(30):
+        history.add(ok(i, 20))
+    history.add(ok(30, 75))
+    history.add(ok(31, 90))
     assert history.health() is HealthStatus.HEALTHY  # two spikes are tolerated
-    history.add(ok(3, 50))
-    assert history.health() is HealthStatus.DEGRADED  # three pings above healthy
-    history.add(ok(4, 61))
-    assert history.health() is HealthStatus.FAILING  # three pings above degraded
+    history.add(ok(32, 61))
+    report = history.health_report()
+    assert report.status is HealthStatus.DEGRADED and report.reasons == ("3 spikes above 60 ms",)
 
 
-def test_timeouts_count_as_failures_and_expire():
+def test_an_outage_fails_and_expires():
     history = ServerHistory(preserved_minutes=10, healthy_ms=40, degraded_ms=60)
     for i in range(3):
         history.add(lost(i))
     assert history.health() is HealthStatus.FAILING
-    # five minutes later the failures fall out of the status window
+    # minutes later the losses fall out of the health window
     history.add(ok(5 * 60 + 3, 20))
     assert history.health() is HealthStatus.HEALTHY
 
@@ -136,12 +135,12 @@ def test_gaps_do_not_affect_stats_or_health():
 
 def test_threshold_change_recomputes():
     history = ServerHistory(preserved_minutes=10, healthy_ms=40, degraded_ms=60)
-    for i, rtt in enumerate([45, 50, 55]):
+    for i, rtt in enumerate([45, 50, 55] + [20] * 20):
         history.add(ok(i, rtt))
     assert history.health() is HealthStatus.DEGRADED
     assert history.window_stats().spikes == 0
     history.set_thresholds(30, 44)
-    assert history.health() is HealthStatus.FAILING
+    assert history.health() is HealthStatus.DEGRADED  # now 3 spikes
     assert history.window_stats().spikes == 3
     history.set_thresholds(60, 80)
     assert history.health() is HealthStatus.HEALTHY

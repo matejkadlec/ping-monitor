@@ -23,7 +23,7 @@ from src.core.models import HealthStatus, PingResult, PingStatus, ServerSpec, is
 from src.core.paths import APP_NAME, APP_USER_MODEL_ID, data_dir
 from src.core.settings import Settings, load_settings, save_settings
 from src.core.spike_log import SpikeLog
-from src.core.stats import STATUS_HIT_THRESHOLD, STATUS_WINDOW_SECONDS, ServerHistory
+from src.core.stats import ServerHistory
 from src.ui import win32
 from src.ui.config_panel import ConfigPanel
 from src.ui.logs_panel import LogsPanel
@@ -135,11 +135,12 @@ class AppController(QObject):
             history = self.histories.get(server.name)
             if history is None:
                 history = ServerHistory(settings.preserved_minutes, settings.ping_threshold_healthy,
-                                        settings.ping_threshold_degraded)
+                                        settings.ping_threshold_degraded, settings.ping_interval)
                 self.histories[server.name] = history
                 self._hosts[server.name] = server.host
             else:
                 history.set_thresholds(settings.ping_threshold_healthy, settings.ping_threshold_degraded)
+                history.set_interval(settings.ping_interval)
                 history.set_preserved_minutes(settings.preserved_minutes)
 
     def _page_specs(self) -> list[tuple[str, str, ServerHistory]]:
@@ -179,27 +180,25 @@ class AppController(QObject):
         if tray_server is None:
             return
         history = self.histories.get(tray_server.name)
-        status = history.health() if history else HealthStatus.UNKNOWN
+        report = history.health_report() if history else None
+        status = report.status if report else HealthStatus.UNKNOWN
         lines = [f"{server.name}: {self._last_values.get(server.name, '–')}" for server in self.settings.servers]
         if self.engine.paused:
             lines.insert(0, "Paused")
         self.tray.set_status(status, lines)
         self._tray_health = status
         if problem is not None:
-            self._alert(tray_server.name, self._alerts.update(status, time.monotonic(), problem))
+            self._alert(tray_server.name, self._alerts.update(status, time.monotonic(), problem),
+                        report.summary() if report else "")
 
-    def _alert(self, name: str, alert: Alert | None) -> None:
+    def _alert(self, name: str, alert: Alert | None, reasons: str = "") -> None:
         """Windows notification when the tray server starts failing and when it is
         healthy again (the timing rules live in HealthAlerts)."""
         if alert is None or not self.settings.notifications:
             return
         if alert is Alert.FAILING:
-            self.tray.notify(
-                f"{name} is failing",
-                f"{STATUS_HIT_THRESHOLD} or more pings above {self.settings.ping_threshold_degraded} ms "
-                f"or lost in the last {STATUS_WINDOW_SECONDS // 60} minutes.",
-                warning=True,
-            )
+            detail = f"{reasons[:1].upper()}{reasons[1:]}." if reasons else "The connection has problems."
+            self.tray.notify(f"{name} is failing", detail, warning=True)
         else:
             self.tray.notify(f"{name} is healthy again", "Pings are back to normal.")
 
