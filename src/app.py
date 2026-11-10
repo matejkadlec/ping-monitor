@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QApplication
 
 from src.core import autostart
 from src.core.alerts import STARTUP_QUIET_S, WAKE_GAP_S, WAKE_QUIET_S, Alert, HealthAlerts
-from src.core.engine import GAP_REASON_SYSTEM, PingEngine
+from src.core.engine import PingEngine
 from src.core.fileio import atomic_write_text
 from src.core.models import HealthStatus, PingResult, PingStatus, ServerSpec, is_problem
 from src.core.paths import APP_NAME, APP_USER_MODEL_ID, data_dir
@@ -156,8 +156,7 @@ class AppController(QObject):
             return  # result of a server that was just removed or changed
         if self.engine.paused:
             return  # queued just before pausing
-        if (result.status is PingStatus.GAP and result.detail == GAP_REASON_SYSTEM
-                and (result.gap_seconds or 0) >= WAKE_GAP_S):
+        if result.status is PingStatus.GAP and (result.gap_seconds or 0) >= WAKE_GAP_S:
             self._alerts.quiet(time.monotonic(), WAKE_QUIET_S)  # back from sleep: network reconnecting
         evicted = history.add(result)
         if is_problem(result, self.settings.ping_threshold_degraded):

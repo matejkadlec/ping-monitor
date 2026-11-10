@@ -19,10 +19,12 @@ from enum import Enum
 from src.core.models import HealthStatus
 
 ALERT_GAP_S = 300.0
-RECOVERY_HOLD_S = 60.0
+# Health turns green ~5 minutes after a real outage anyway; the hold only
+# matters for a flapping server, where it keeps notifications rare.
+RECOVERY_HOLD_S = 240.0
 STARTUP_QUIET_S = 60.0
 WAKE_QUIET_S = 60.0
-WAKE_GAP_S = 30.0  # a "system" gap at least this long means the PC was asleep
+WAKE_GAP_S = 30.0  # a gap this long means the PC was asleep (a hanging ping call takes seconds)
 
 
 class Alert(Enum):
