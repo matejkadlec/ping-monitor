@@ -240,3 +240,25 @@ def test_paused_badge_follows_the_state_on_hidden_tabs(qapp, controller):
     pump(qapp, 0.6)
     assert not hidden._paused_state
     assert not hidden._paused.isVisible()
+
+
+def test_dropped_rows_do_not_cut_a_glide_short(qapp, motion):
+    from src.ui.ping_stream import PingStream
+
+    stream = PingStream()
+    stream.resize(600, 300)
+    stream.show()
+    stream.model.reset_rows(results(300))
+    pump(qapp, 0.5)  # the view glides to the newest row first
+    view = stream.view
+    bar = view.verticalScrollBar()
+    bar.stop_glide()
+    bar.setValue(1000)  # reading older pings (not following)
+    pump(qapp, 0.05)
+    assert not view.following
+    bar.glide_to(1600, 300)
+    pump(qapp, 0.05)
+    stream.model.append(results(1, datetime.now())[0], evicted=1)  # the oldest row drops off
+    pump(qapp, 0.5)
+    assert bar.value() == 1600 - view._delegate.row_height()
+    stream.deleteLater()

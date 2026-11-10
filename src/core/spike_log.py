@@ -238,10 +238,10 @@ class SpikeLog:
                         partial_first = True
                         for earlier in range(index - 1, -1, -1):
                             if lines[earlier].lstrip().startswith("==="):
-                                marker = parse_line(lines[earlier])
+                                marker = parse_line(lines[earlier])  # None if damaged
                                 if marker is not None:
                                     items.append(marker)
-                                    break
+                                break  # never borrow the header of an older session
                     break
                 entries += 1
             items.append(item)

@@ -174,7 +174,63 @@ def test_previous_sessions_retry_after_a_read_error(qapp, tmp_path, monkeypatch)
         panel.tabs.set_current(0)
         panel.tabs.set_current(1)
         assert len(calls) == 2 and panel._previous_loaded
+        assert "Could not read" not in panel.previous_list.empty_text
     finally:
         LogsPanel._last_tab = 0
         log.close()
         panel.deleteLater()
+
+
+def test_new_entries_do_not_cut_a_glide_short(qapp):
+    from src.ui.theme import THEME
+
+    THEME.set_motion(True)
+    view = _LogList(False, "empty", headers=False)
+    view.resize(500, 300)
+    view.show()
+    view.model_.set_items(entries(300))
+    pump(qapp, 0.1)
+    bar = view.verticalScrollBar()
+    bar.setValue(600)
+    bar.glide_to(1200, 300)  # e.g. a wheel notch
+    pump(qapp, 0.05)
+    view.model_.prepend(entries(1)[0])
+    pump(qapp, 0.5)
+    assert bar.value() == 1200 + view._delegate.row_height()
+    view.deleteLater()
+
+
+def test_tabs_switch_back_and_forth_with_the_keyboard(qapp, tmp_path):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+
+    log = SpikeLog(tmp_path)
+    log.start_session()
+    panel = LogsPanel(log, 60, tmp_path)
+    panel.show()
+    try:
+        panel.tabs.setFocus()
+        for key, expected in ((Qt.Key.Key_Right, 1), (Qt.Key.Key_Left, 0), (Qt.Key.Key_Right, 1)):
+            panel.tabs.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier))
+            assert panel.tabs.current() == expected
+            assert panel.focusWidget() is panel.tabs
+    finally:
+        LogsPanel._last_tab = 0
+        log.close()
+        panel.deleteLater()
+
+
+def test_highlight_finishes_after_showing_the_list_again(qapp):
+    from src.ui.theme import THEME
+
+    THEME.set_motion(True)
+    view = _LogList(False, "empty", headers=False)
+    view.resize(500, 300)
+    view.show()
+    view.hide()
+    view.model_.prepend(entries(1)[0])  # arrives while another tab is shown
+    view.show()
+    assert view._fresh_timer.isActive()
+    pump(qapp, 1.5)
+    assert not view._fresh_timer.isActive()
+    view.deleteLater()

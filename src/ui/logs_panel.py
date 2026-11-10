@@ -5,7 +5,7 @@ previous sessions, newest first.
 A host that is down logs one entry per second (~86,400 a day), so the lists
 show the newest ``MAX_ROWS`` entries and everything else stays in the log
 files. All rows have one height, so a new entry costs the same with 10 or
-5,000 rows on screen.
+20,000 rows in the list.
 """
 
 import time
@@ -37,7 +37,7 @@ from src.ui.theme import THEME
 ITEM_ROLE = Qt.ItemDataRole.UserRole + 1
 FRESH_MS = 1200.0
 FRESH_FRAME_MS = 33
-MAX_ROWS = 5000
+MAX_ROWS = 20_000
 
 _KIND_TEXT = {"timeout": "Timed out", "unreachable": "Unreachable", "error": "Error"}
 
@@ -423,12 +423,11 @@ class _LogList(FastListView):
         if first != 0:
             return  # e.g. the "older entries" row at the end
         bar: SmoothScrollBar = self.verticalScrollBar()  # type: ignore[assignment]
-        at_top = bar.glide_target <= THEME.px(30)
+        at_top = bar.glide_target <= THEME.px(30) and not bar.isSliderDown()
         self.executeDelayedItemsLayout()  # the scroll range must include the new rows now
-        bar.stop_glide()
-        # Keep what is on screen in place; when you are at the top, the new
-        # entry then glides in instead of everything jumping down a row.
-        bar.setValue(bar.value() + (last - first + 1) * self._delegate.row_height())
+        # Keep what is on screen in place (also mid-glide); when you are at the
+        # top, the new entry then glides in instead of everything jumping down.
+        bar.shift_by((last - first + 1) * self._delegate.row_height())
         if at_top:
             bar.glide_to(0, 260)
         if not self._fresh_timer.isActive() and self._animations_allowed():
@@ -449,6 +448,12 @@ class _LogList(FastListView):
     def wheelEvent(self, event) -> None:  # also used for the wheel over the scrollbar
         bar: SmoothScrollBar = self.verticalScrollBar()  # type: ignore[assignment]
         bar.scroll_wheel(event, 3 * self._delegate.row_height())
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # Finish the highlight of entries added just before (tab switch, tray).
+        if not self._fresh_timer.isActive() and self.model_.prune_fresh() and self._animations_allowed():
+            self._fresh_timer.start()
 
     def keyPressEvent(self, event) -> None:
         if event.matches(QKeySequence.StandardKey.Copy):
@@ -493,8 +498,8 @@ class LogsPanel(Panel):
             multi_day,
             f"No ping spikes in this session yet.\nPings above {degraded_ms} ms and lost pings show up here.",
             headers=False, overflow_text="Older entries of this session are in the log folder.")
-        self.previous_list = _LogList(
-            True, "No ping spikes from previous sessions in the last 24 hours.", headers=True)
+        self._previous_empty_text = "No ping spikes from previous sessions in the last 24 hours."
+        self.previous_list = _LogList(True, self._previous_empty_text, headers=True)
         # Both lists share the space and cross-fade when switching tabs.
         stack = QStackedLayout()
         stack.setStackingMode(QStackedLayout.StackingMode.StackAll)
@@ -551,7 +556,8 @@ class LogsPanel(Panel):
         else:
             hiding.hide()
             showing.show()
-        showing.setFocus()
+        if self.window().focusWidget() is not self.tabs:  # keep Left / Right working on the tabs
+            showing.setFocus()
 
     def _load_previous(self) -> None:
         try:
@@ -562,6 +568,7 @@ class LogsPanel(Panel):
             self.previous_list.model_.set_items([])
             return
         self._previous_loaded = True
+        self.previous_list.empty_text = self._previous_empty_text
         self.previous_list.model_.set_items(
             recent.items, more_in_file="Older entries are in the log folder." if recent.truncated else None,
             partial_first=recent.partial_first)

@@ -339,9 +339,7 @@ class PingStreamView(FastListView):
         # Keep what you are reading in place while old rows drop off the top.
         if not self._following:
             removed = getattr(self, "_removed_rows", 0)
-            bar = self._scrollbar
-            bar.stop_glide()
-            bar.setValue(max(0, bar.value() - removed * self._delegate.row_height()))
+            self._scrollbar.shift_by(-removed * self._delegate.row_height())
 
     def _tick_fresh(self) -> None:
         model = self._model
@@ -394,6 +392,9 @@ class PingStreamView(FastListView):
         # followed the newest ping when the view was hidden keeps following it.
         if self._following or self._follow_on_show:
             QTimer.singleShot(0, self, self.scroll_to_latest_instantly)
+        # Finish the highlight of rows added just before (e.g. switching back).
+        if not self._fresh_timer.isActive() and self._model.prune_fresh() and self._animations_allowed():
+            self._fresh_timer.start()
 
 
 class PingStream(QFrame):

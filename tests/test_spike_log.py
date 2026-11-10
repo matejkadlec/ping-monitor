@@ -164,3 +164,17 @@ def test_recent_previous_items_reads_only_the_newest_entries(tmp_path):
 
     assert log.current_entries(limit=0) == []
     assert SpikeLog(tmp_path / "missing").recent_previous_items(10).items == []
+
+
+def test_recent_previous_items_never_borrow_an_older_header(tmp_path):
+    lines = [
+        "=== Session 2026-11-10 08:00:00 ===",
+        "[2026-11-10 08:01:00] a.com: 70ms",
+        "=== Session 2026-11-10 09:0",  # damaged marker of the next session
+        "[2026-11-10 09:01:00] b.com: 71ms",
+        "[2026-11-10 09:02:00] b.com: 72ms",
+    ]
+    (tmp_path / "ping_spikes.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    recent = SpikeLog(tmp_path).recent_previous_items(1)
+    assert recent.truncated and recent.partial_first
+    assert [type(item).__name__ for item in recent.items] == ["SpikeEntry"]

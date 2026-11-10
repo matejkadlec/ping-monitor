@@ -116,6 +116,18 @@ class SmoothScrollBar(QScrollBar):
             self.glide_to(round(self.glide_target - notches * step), 220)
         event.accept()
 
+    def shift_by(self, delta: int) -> None:
+        """Rows were added (or dropped) above what is on screen: move by ``delta``
+        px so the visible rows stay put, also in the middle of a glide."""
+        if not delta or self.isSliderDown():
+            return  # while dragging, the handle follows the mouse
+        if self.is_gliding() and self._glide_target is not None:
+            self._glide_target = max(self.minimum(), min(self.maximum(), self._glide_target + delta))
+            self._glide.setStartValue(float(self._glide.startValue()) + delta)
+            self._glide.setEndValue(float(self._glide_target))  # re-applies the shifted position
+        else:
+            self.setValue(self.value() + delta)
+
     def stop_glide(self) -> None:
         self._glide.stop()
         self._glide_target = None
