@@ -19,6 +19,7 @@ from src.core.settings import Settings, load_settings, save_settings
 from src.core.spike_log import SpikeLog
 from src.core.stats import ServerHistory
 from src.ui import win32
+from src.ui.config_panel import ConfigPanel
 from src.ui.main_window import MainWindow
 from src.ui.theme import THEME
 from src.ui.tray import TrayController
@@ -75,6 +76,7 @@ class AppController(QObject):
         self.window.resetCurrentRequested.connect(self.reset_server)
         self.window.resetAllRequested.connect(self.reset_all)
         self.window.pauseToggled.connect(self.set_paused)
+        self.window.configRequested.connect(self.open_config)
         self.window.set_servers(self._page_specs())
 
         self.tray = TrayController(self)
@@ -209,6 +211,13 @@ class AppController(QObject):
         self.tray.set_close_to_tray(settings.close_to_tray)
         self._update_tray()
         LOGGER.info("Settings applied")
+
+    def open_config(self) -> None:
+        overlay = self.window.overlay
+        if overlay.contains_panel(ConfigPanel) is not None:
+            return
+        self.show_window()
+        self.window.open_panel(ConfigPanel(self.settings, self.apply_settings, overlay, self.window.toasts))
 
     # ------------------------------------------------------------- window
     def show_window(self) -> None:

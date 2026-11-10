@@ -18,9 +18,11 @@ from src.core.stats import ServerHistory
 from src.ui import win32
 from src.ui.controls import IconButton, fade, settle_fades
 from src.ui.menus import FadeMenu
+from src.ui.overlay import OverlayHost, Panel
 from src.ui.server_page import ServerPage
 from src.ui.tab_strip import TabStrip
 from src.ui.theme import THEME
+from src.ui.toast import ToastManager
 
 DEFAULT_SIZE = QSize(1200, 800)
 # Window size (logical px) at which the UI is drawn at 100 %.
@@ -28,7 +30,13 @@ BASE_WIDTH, BASE_HEIGHT = 1200, 780
 
 
 class _Root(QWidget):
-    """Paints the window background."""
+    """Paints the window background; keeps overlays and toasts sized to it."""
+
+    resized = Signal()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.resized.emit()
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
@@ -49,6 +57,7 @@ class MainWindow(QMainWindow):
     resetCurrentRequested = Signal(str)
     resetAllRequested = Signal()
     pauseToggled = Signal(bool)
+    configRequested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -81,8 +90,11 @@ class MainWindow(QMainWindow):
         self.pause_button.clicked.connect(lambda: self.set_paused(not self._paused, emit=True))
         self.reset_button = IconButton("rotate-ccw", "Reset metrics", self.top_bar)
         self.reset_button.clicked.connect(self._show_reset_menu)
+        self.config_button = IconButton("settings", "Open config", self.top_bar)
+        self.config_button.clicked.connect(self.configRequested.emit)
         self._actions.addWidget(self.pause_button)
         self._actions.addWidget(self.reset_button)
+        self._actions.addWidget(self.config_button)
 
         self._top_layout = QHBoxLayout(self.top_bar)
         self._top_layout.addWidget(self.tabs, 1)
@@ -94,6 +106,11 @@ class MainWindow(QMainWindow):
         content_layout.setSpacing(0)
         content_layout.addWidget(self.top_bar)
         content_layout.addWidget(self.stack, 1)
+
+        self.overlay = OverlayHost(root, self.content)
+        self.toasts = ToastManager(root)
+        root.resized.connect(self._root_resized)
+        self._root = root
 
         self._reset_menu = FadeMenu(self)
         self._reset_menu.addAction("Reset current tab", self._reset_current)
@@ -202,7 +219,17 @@ class MainWindow(QMainWindow):
             QShortcut(QKeySequence(f"Ctrl+{number}"), self,
                       lambda n=number: self.tabs.set_current(n - 1) if n <= self.tabs.count() else None)
         QShortcut(QKeySequence("Ctrl+R"), self, self._reset_current)
+        QShortcut(QKeySequence("Ctrl+,"), self, self.configRequested.emit)
         QShortcut(QKeySequence("Ctrl+P"), self, lambda: self.set_paused(not self._paused, emit=True))
+
+    # ------------------------------------------------------------ overlays
+    def open_panel(self, panel: Panel) -> None:
+        self.overlay.open(panel)
+        self.toasts.raise_all()
+
+    def _root_resized(self) -> None:
+        self.overlay.setGeometry(self._root.rect())
+        self.toasts.reposition()
 
     # --------------------------------------------------------------- theme
     def _apply_theme(self) -> None:
