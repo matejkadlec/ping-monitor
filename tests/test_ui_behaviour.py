@@ -182,3 +182,61 @@ def test_toggling_close_to_tray_keeps_the_streams(qapp, controller, monkeypatch)
     assert calls == []
     controller.apply_settings(controller.settings.with_changes(ping_threshold_healthy=35))
     assert calls == [1]
+
+
+def test_stream_stays_fast_with_long_histories(qapp):
+    from src.ui.ping_stream import PingStream
+
+    stream = PingStream()
+    stream.resize(900, 600)
+    stream.show()
+    stream.model.reset_rows(results(100_000))
+    pump(qapp, 0.1)
+    timings = []
+    for result in results(9, datetime.now()):
+        started = time.perf_counter()
+        stream.model.append(result, evicted=1)  # what every ping does once the window is full
+        qapp.processEvents()
+        timings.append(time.perf_counter() - started)
+    assert sorted(timings)[4] < 0.04  # QListView needed ~0.13 s here
+    stream.deleteLater()
+
+
+def test_row_height_follows_the_ui_scale(qapp):
+    from src.ui.ping_stream import PingStream
+    from src.ui.theme import THEME
+
+    stream = PingStream()
+    stream.model.reset_rows(results(10))
+    try:
+        THEME.set_scale(1.2)
+        assert stream.view.verticalHeader().defaultSectionSize() == THEME.px(26)
+    finally:
+        THEME.set_scale(1.0)
+    assert stream.view.verticalHeader().defaultSectionSize() == THEME.px(26)
+    stream.deleteLater()
+
+
+def test_fresh_entries_are_pruned_while_hidden(monkeypatch):
+    from src.ui import ping_stream
+
+    model = ping_stream.PingStreamModel()
+    for result in results(50):
+        model.append(result)
+    later = time.monotonic() + 5
+    monkeypatch.setattr(ping_stream, "time", SimpleNamespace(monotonic=lambda: later))
+    model.append(results(1, datetime.now())[0])
+    assert len(model._fresh) == 1
+
+
+def test_paused_badge_follows_the_state_on_hidden_tabs(qapp, controller):
+    window = controller.window
+    window.show()
+    names = controller.settings.server_names()
+    hidden = window.page(names[1])
+    controller.set_paused(True)
+    controller.set_paused(False)
+    window.tabs.set_current(1)
+    pump(qapp, 0.6)
+    assert not hidden._paused_state
+    assert not hidden._paused.isVisible()

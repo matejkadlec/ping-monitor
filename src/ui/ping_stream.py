@@ -1,8 +1,8 @@
 """
 The live ping stream: one row per ping, newest at the bottom.
 
-A virtualized list (only visible rows are painted), so long sessions stay
-smooth. New rows fade in from a soft highlight, the view follows the newest
+A virtualized list (only visible rows are painted, fixed row height), so long
+sessions stay smooth. New rows fade in from a soft highlight, the view follows the newest
 row only while you are at the bottom, and a "Latest" pill brings you back.
 """
 
@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QFrame,
-    QListView,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -35,6 +34,7 @@ from PySide6.QtWidgets import (
 
 from src.core.models import LatencyLevel, PingResult, PingStatus, classify_latency
 from src.ui.controls import TextButton, fade
+from src.ui.fast_list import FastListView
 from src.ui.scrollbar import SmoothScrollBar
 from src.ui.theme import THEME, mix
 
@@ -97,6 +97,7 @@ class PingStreamModel(QAbstractListModel):
     # updates
     def append(self, result: PingResult, evicted: int = 0) -> None:
         row = len(self._rows)
+        self.prune_fresh()  # also while hidden, when nothing else prunes
         self.beginInsertRows(QModelIndex(), row, row)
         self._rows.append(result)
         self._fresh[id(result)] = time.monotonic()
@@ -239,15 +240,16 @@ class PingStreamDelegate(QStyledItemDelegate):
         painter.restore()
 
 
-class PingStreamView(QListView):
+class PingStreamView(FastListView):
     """List view with smooth wheel scrolling and follow-the-latest behaviour."""
 
     followChanged = Signal(bool)
 
     def __init__(self, model: PingStreamModel, parent=None) -> None:
-        super().__init__(parent)
+        self._delegate = PingStreamDelegate(model)
+        super().__init__(self._delegate.row_height, parent)
+        self._delegate.setParent(self)
         self._model = model
-        self._delegate = PingStreamDelegate(model, self)
         self._scrollbar = SmoothScrollBar(self)
         self._scrollbar.wheel_handler = self.wheelEvent
         self._following = True
@@ -256,16 +258,11 @@ class PingStreamView(QListView):
         self.setModel(model)
         self.setItemDelegate(self._delegate)
         self.setVerticalScrollBar(self._scrollbar)
-        self.setUniformItemSizes(True)
-        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # Always reserve the bar's space (it fades in when needed) so rows never shift.
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.setFrameShape(QFrame.Shape.NoFrame)
         self.setMouseTracking(True)
         self.viewport().setAttribute(Qt.WidgetAttribute.WA_Hover)
-        self.setStyleSheet("QListView { background: transparent; border: none; outline: none; }")
         self.viewport().setAutoFillBackground(False)
 
         self._fresh_timer = QTimer(self)
@@ -362,7 +359,7 @@ class PingStreamView(QListView):
             self._fresh_timer.stop()
 
     def _theme_changed(self) -> None:
-        self.doItemsLayout()
+        self.apply_row_height()
         self.viewport().update()
 
     # ---------------------------------------------------------------- input

@@ -9,7 +9,7 @@ draw the sonar ring that ripples out of the newest point.
 import bisect
 import math
 
-from PySide6.QtCore import QEasingCurve, QPointF, QRectF, QSize, Qt, QVariantAnimation
+from PySide6.QtCore import QElapsedTimer, QEasingCurve, QPointF, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -24,10 +24,10 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from src.core.models import LatencyLevel, PingResult, PingStatus, classify_latency
 from src.core.stats import ServerHistory
-from src.ui.controls import connect_running
 from src.ui.theme import THEME
 
 RING_MS = 900  # shorter than the usual 1 s interval, so the chart rests between pings
+RING_FRAME_MS = 33  # a soft ripple: 30 fps is plenty
 
 _NICE_STEPS = (5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000)
 
@@ -73,11 +73,11 @@ class LatencyChart(QWidget):
         self._head: tuple[QPointF, PingResult] | None = None
         self._hover_x: float | None = None
         self._plot = QRectF()
-        self._ring = QVariantAnimation(self)
-        self._ring.setStartValue(0.0)
-        self._ring.setEndValue(1.0)
-        self._ring.setEasingCurve(QEasingCurve.Type.OutCubic)
-        connect_running(self._ring, lambda _v: self._update_head())
+        self._ring_clock = QElapsedTimer()
+        self._ring_curve = QEasingCurve(QEasingCurve.Type.OutCubic)
+        self._ring = QTimer(self)
+        self._ring.setInterval(RING_FRAME_MS)
+        self._ring.timeout.connect(self._ring_tick)
         self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumHeight(THEME.px(120))
@@ -97,9 +97,18 @@ class LatencyChart(QWidget):
         if self.isVisible() and not self.window().isMinimized() and THEME.ambient_active \
                 and self._history and self._history.last_result \
                 and self._history.last_result.status is PingStatus.OK:
-            self._ring.stop()
-            self._ring.setDuration(RING_MS)
+            self._ring_clock.start()
             self._ring.start()
+
+    def _ring_progress(self) -> float:
+        if not self._ring.isActive():
+            return 1.0
+        return self._ring_curve.valueForProgress(min(1.0, self._ring_clock.elapsed() / RING_MS))
+
+    def _ring_tick(self) -> None:
+        if self._ring_clock.elapsed() >= RING_MS:
+            self._ring.stop()
+        self._update_head()
 
     def _update_head(self) -> None:
         """Animation frames only repaint the area around the newest point."""
@@ -347,7 +356,7 @@ class LatencyChart(QWidget):
         level = classify_latency(result, healthy, degraded)
         color = THEME.level_color(level)
         if result.status is PingStatus.OK:
-            progress = float(self._ring.currentValue() or 0.0) if self._ring.state() else 1.0
+            progress = self._ring_progress()
             if progress < 1.0:
                 ring = QColor(color)
                 ring.setAlphaF(0.55 * (1.0 - progress) ** 1.5)

@@ -165,6 +165,7 @@ class ServerPage(QWidget):
         self._title = QLabel(name, self)
         self._address = QLabel(host, self)
         self._paused = QLabel("Paused", self)
+        self._paused_state = False
         self._paused.setToolTip("Pinging is paused. Resume with the play button or Ctrl+P.")
         self._paused.hide()
         self._pill = StatusPill(self)
@@ -205,7 +206,10 @@ class ServerPage(QWidget):
         self.chart.setFixedHeight(THEME.px(160))
 
     def set_paused(self, paused: bool) -> None:
-        if paused != self._paused.isVisible():
+        # Compare with the wanted state: isVisible() is False on hidden tabs and
+        # still True while the badge fades out.
+        if paused != self._paused_state:
+            self._paused_state = paused
             fade(self._paused, paused, THEME.NORMAL)
 
     # -------------------------------------------------------------- updates

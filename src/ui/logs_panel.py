@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QFrame,
     QHBoxLayout,
-    QListView,
     QStackedLayout,
     QStyle,
     QStyledItemDelegate,
@@ -30,6 +29,7 @@ from PySide6.QtWidgets import (
 from src.core.models import LatencyLevel
 from src.core.spike_log import SessionMarker, SpikeEntry, SpikeLog
 from src.ui.controls import TextButton, Tween, fade
+from src.ui.fast_list import FastListView
 from src.ui.overlay import Panel
 from src.ui.scrollbar import SmoothScrollBar
 from src.ui.theme import THEME
@@ -239,6 +239,7 @@ class LogModel(QAbstractListModel):
         self.endResetModel()
 
     def prepend(self, entry: SpikeEntry) -> None:
+        self.prune_fresh()  # also while hidden, when nothing else prunes
         self.beginInsertRows(QModelIndex(), 0, 0)
         self._items.insert(0, entry)
         self._fresh[id(entry)] = time.monotonic()
@@ -388,26 +389,21 @@ class LogDelegate(QStyledItemDelegate):
                          Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, entry_text(item))
 
 
-class _LogList(QListView):
+class _LogList(FastListView):
     def __init__(self, show_dates: bool, empty_text: str, headers: bool, overflow_text: str = "",
                  parent=None) -> None:
-        super().__init__(parent)
+        super().__init__(LogDelegate.row_height, parent)
         self.model_ = LogModel(headers, overflow_text=overflow_text, parent=self)
         self._delegate = LogDelegate(self.model_, show_dates, self)
         self.setModel(self.model_)
         self.setItemDelegate(self._delegate)
-        self.setUniformItemSizes(True)
         bar = SmoothScrollBar(self)
         bar.wheel_handler = self.wheelEvent
         self.setVerticalScrollBar(bar)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.setFrameShape(QFrame.Shape.NoFrame)
         self.setMouseTracking(True)
         self.viewport().setAttribute(Qt.WidgetAttribute.WA_Hover)
-        self.setStyleSheet("QListView { background: transparent; border: none; outline: none; }")
         self.empty_text = empty_text
         self._fresh_rows_painted = 0
         self._fresh_timer = QTimer(self)
@@ -417,7 +413,7 @@ class _LogList(QListView):
         THEME.changed.connect(self._theme_changed)
 
     def _theme_changed(self) -> None:
-        self.doItemsLayout()
+        self.apply_row_height()
         self.viewport().update()
 
     def _animations_allowed(self) -> bool:
