@@ -18,6 +18,7 @@ ENV/
 deviations.txt
 ping_monitor.lock
 *.log
+logs/
 
 # IDE files
 .vscode/
