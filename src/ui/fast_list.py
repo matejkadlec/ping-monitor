@@ -38,3 +38,10 @@ class FastListView(QTableView):
     def apply_row_height(self) -> None:
         """Call after a UI scale change."""
         self.verticalHeader().setDefaultSectionSize(self._row_height())
+
+    def moveCursor(self, action, modifiers):  # noqa: N802 - Qt naming
+        # In a table, Home / End move within the row; in a list they go to the
+        # first / last row (what Ctrl+Home / Ctrl+End do in a table).
+        if action in (QAbstractItemView.CursorAction.MoveHome, QAbstractItemView.CursorAction.MoveEnd):
+            modifiers = modifiers | Qt.KeyboardModifier.ControlModifier
+        return super().moveCursor(action, modifiers)

@@ -234,3 +234,18 @@ def test_highlight_finishes_after_showing_the_list_again(qapp):
     pump(qapp, 1.5)
     assert not view._fresh_timer.isActive()
     view.deleteLater()
+
+
+def test_home_and_end_go_to_the_first_and_last_entry(qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+
+    view = _LogList(False, "empty", headers=False)
+    view.resize(500, 300)
+    view.show()
+    view.model_.set_items(entries(100))
+    view.setCurrentIndex(view.model_.index(10, 0))
+    for key, row in ((Qt.Key.Key_End, 99), (Qt.Key.Key_Home, 0)):
+        view.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier))
+        assert view.currentIndex().row() == row
+    view.deleteLater()
