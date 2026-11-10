@@ -143,3 +143,106 @@ def test_unsaved_changes_ask_before_closing(qapp, controller):
     controller.window.overlay.top_panel().yes_button.click()
     assert wait_until(qapp, lambda: not controller.window.overlay.is_open(), 2.0)
     assert controller.settings.ping_interval == 1
+
+
+def start_host_check(qapp, panel) -> None:
+    panel.add_button.click()
+    row = panel._rows[-1]
+    row.name.setText("example.org")
+    row.host.setText("93.184.215.14")
+    panel.save_button.click()  # the check runs in a thread; its result is queued
+    assert panel._check_token is not None
+
+
+def test_cancelling_a_host_check_restores_save(qapp, controller):
+    panel = open_panel(qapp, controller)
+    start_host_check(qapp, panel)
+    panel.request_close()  # Esc / X / Cancel while "Checking…"
+    pump(qapp, 0.3)
+    dialog = controller.window.overlay.top_panel()
+    assert isinstance(dialog, ConfirmDialog)
+    dialog.no_button.click()
+    pump(qapp, 0.6)
+    assert controller.window.overlay.top_panel() is panel
+    assert panel.save_button.isEnabled() and panel.save_button.text() == "Save"
+    assert "example.org" not in controller.settings.server_names()
+
+
+def test_no_delete_dialog_while_checking(qapp, controller):
+    panel = open_panel(qapp, controller)
+    start_host_check(qapp, panel)
+    panel._rows[0].delete.click()
+    assert controller.window.overlay.top_panel() is panel  # no "Delete server?" dialog
+    assert wait_until(qapp, lambda: "example.org" in controller.settings.server_names(), 5.0)
+    assert "cloudflare.com" in controller.settings.server_names()
+
+
+def test_double_save_applies_once(qapp, controller):
+    panel = open_panel(qapp, controller)
+    calls = []
+    save = panel._on_save
+    panel._on_save = lambda settings: (calls.append(settings), save(settings))
+    panel.healthy.setText("33")
+    panel.save_button.click()
+    panel._save()  # a second click while it fades out
+    assert len(calls) == 1
+    assert not panel.save_button.isEnabled()
+
+
+def test_tab_stays_inside_the_panel(qapp, controller):
+    panel = open_panel(qapp, controller)
+    window = controller.window
+    panel.save_button.setFocus()
+    for _ in range(40):
+        panel.focusNextPrevChild(True)
+        assert panel.isAncestorOf(window.focusWidget())
+    for _ in range(5):
+        panel.focusNextPrevChild(False)
+        assert panel.isAncestorOf(window.focusWidget())
+
+
+def test_window_shortcuts_wait_while_a_panel_is_open(qapp, controller):
+    from PySide6.QtGui import QShortcut
+
+    open_panel(qapp, controller)
+    for shortcut in controller.window.findChildren(QShortcut):
+        if shortcut.key().toString() == "Ctrl+P":
+            shortcut.activated.emit()
+    assert not controller.engine.paused
+
+
+def test_tray_toggle_while_open_is_not_undone_by_save(qapp, controller):
+    panel = open_panel(qapp, controller)
+    controller.set_close_to_tray(False)
+    assert not panel.close_to_tray.isChecked()
+    panel.healthy.setText("36")
+    panel.save_button.click()
+    assert controller.settings.ping_threshold_healthy == 36
+    assert controller.settings.close_to_tray is False
+
+
+def test_panel_grows_with_added_rows(qapp, controller):
+    controller.window.resize(1200, 1000)
+    panel = open_panel(qapp, controller)
+    pump(qapp, 0.6)
+    before = panel.height()
+    panel.add_button.click()
+    pump(qapp, 0.5)
+    assert panel.height() > before
+
+
+def test_ambient_animations_stop_while_a_panel_is_open(qapp, controller):
+    from datetime import datetime
+
+    from src.core.models import PingResult, PingStatus
+    from src.ui.theme import THEME
+
+    THEME.set_motion(True)
+    controller.engine.stop()
+    open_panel(qapp, controller)
+    page = controller.window.page(controller.settings.servers[0].name)
+    server = controller.settings.servers[0]
+    for _ in range(3):
+        controller._on_result(PingResult(server.name, server.host, datetime.now(), PingStatus.OK, 20))
+        pump(qapp, 0.1)
+    assert not page.stream.view._fresh_timer.isActive()

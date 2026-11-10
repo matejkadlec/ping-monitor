@@ -387,10 +387,14 @@ class CheckBox(QAbstractButton):
         THEME.changed.connect(self.updateGeometry)
 
     def setChecked(self, checked: bool) -> None:  # noqa: N802 - Qt naming
+        self.set_checked(checked, animate=False)
+
+    def set_checked(self, checked: bool, animate: bool = True) -> None:
         if checked == self.isChecked():
             return  # keep a running toggle animation going
-        super().setChecked(checked)
-        self._checked.jump(1.0 if checked else 0.0)
+        super().setChecked(checked)  # emits toggled, which starts the animation
+        if not animate:
+            self._checked.jump(1.0 if checked else 0.0)
 
     def sizeHint(self) -> QSize:
         box = THEME.px(18)

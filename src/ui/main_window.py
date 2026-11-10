@@ -163,6 +163,7 @@ class MainWindow(QMainWindow):
 
         self.overlay = OverlayHost(root, self.content)
         self.toasts = ToastManager(root)
+        self.overlay.opened.connect(self.toasts.raise_all)  # dialogs never cover toasts
         root.resized.connect(self._root_resized)
         self._root = root
 
@@ -282,15 +283,19 @@ class MainWindow(QMainWindow):
             if count:
                 self.tabs.set_current((self.tabs.current_index() + offset) % count)
 
-        QShortcut(QKeySequence("Ctrl+Tab"), self, lambda: go(1))
-        QShortcut(QKeySequence("Ctrl+Shift+Tab"), self, lambda: go(-1))
+        def shortcut(keys: str, action) -> None:
+            # While a panel is open, the app behind it takes no keyboard commands.
+            QShortcut(QKeySequence(keys), self, lambda: None if self.overlay.is_open() else action())
+
+        shortcut("Ctrl+Tab", lambda: go(1))
+        shortcut("Ctrl+Shift+Tab", lambda: go(-1))
         for number in range(1, 10):
-            QShortcut(QKeySequence(f"Ctrl+{number}"), self,
-                      lambda n=number: self.tabs.set_current(n - 1) if n <= self.tabs.count() else None)
-        QShortcut(QKeySequence("Ctrl+R"), self, self._reset_current)
-        QShortcut(QKeySequence("Ctrl+,"), self, self.configRequested.emit)
-        QShortcut(QKeySequence("Ctrl+L"), self, self.logsRequested.emit)
-        QShortcut(QKeySequence("Ctrl+P"), self, lambda: self.set_paused(not self._paused, emit=True))
+            shortcut(f"Ctrl+{number}",
+                     lambda n=number: self.tabs.set_current(n - 1) if n <= self.tabs.count() else None)
+        shortcut("Ctrl+R", self._reset_current)
+        shortcut("Ctrl+,", self.configRequested.emit)
+        shortcut("Ctrl+L", self.logsRequested.emit)
+        shortcut("Ctrl+P", lambda: self.set_paused(not self._paused, emit=True))
 
     # ------------------------------------------------------------- extras
     def set_background_image(self, enabled: bool) -> None:

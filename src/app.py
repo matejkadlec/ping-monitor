@@ -229,6 +229,10 @@ class AppController(QObject):
         except OSError as error:
             self.tray.set_close_to_tray(self.settings.close_to_tray)
             self.tray.notify(APP_NAME, f"Could not save the setting: {error}", warning=True)
+            return
+        panel = self.window.overlay.contains_panel(ConfigPanel)
+        if panel is not None:
+            panel.sync_close_to_tray(enabled)  # its next Save must not undo this
 
     def apply_settings(self, settings: Settings) -> None:
         """Persist and apply new settings without throwing away unchanged data.

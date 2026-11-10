@@ -168,7 +168,9 @@ class ToastManager:
         for toast in self._toasts:  # avoid stacking duplicates of the same message
             if toast.message == message and not toast._closing:
                 toast._elapsed_before_pause = 0
-                toast._clock.start()
+                if toast._clock.isValid():  # not paused by the mouse: count again from now
+                    toast._clock.start()
+                toast.update()
                 return
         toast = Toast(self, message, kind, duration_ms)
         self._toasts.insert(0, toast)

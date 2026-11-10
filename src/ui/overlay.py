@@ -2,14 +2,16 @@
 In-window overlays: the app behind gets blurred and dimmed (and keeps updating
 live), panels fade and rise into place. Overlays can stack (a confirmation on
 top of the config panel); Escape or a click on the dimmed area asks the top
-panel to close.
+panel to close. While a panel is open, Tab keeps the focus inside it.
 """
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QEasingCurve, QRect, QRectF, QSize, Qt, QVariantAnimation, Signal
+import shiboken6
+from PySide6.QtCore import QEasingCurve, QEvent, QObject, QRect, QRectF, QSize, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QFont, QKeySequence, QPainter, QPainterPath, QPen, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QGraphicsBlurEffect,
     QHBoxLayout,
@@ -18,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.ui.controls import IconButton, TextButton, Tween, fade, settle_fades
+from src.ui.controls import IconButton, TextButton, Tween, connect_running, fade, settle_fades
 from src.ui.theme import THEME
 
 
@@ -32,15 +34,17 @@ class Panel(QFrame):
         super().__init__(parent)
         self.setObjectName("OverlayPanel")
         self._width = width
+        self._themed: list[tuple[QObject, Callable[[], None]]] = []
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
         self.outer = QVBoxLayout(self)
-        self.outer.setSpacing(THEME.px(14))
-        self.outer.setContentsMargins(THEME.px(24), THEME.px(20), THEME.px(24), THEME.px(22))
+        self.themed(self, lambda: (
+            self.outer.setSpacing(THEME.px(14)),
+            self.outer.setContentsMargins(THEME.px(24), THEME.px(20), THEME.px(24), THEME.px(22))))
         if title:
             header = QHBoxLayout()
             header.setSpacing(THEME.px(8))
             self.title_label = QLabel(title)
-            self.title_label.setFont(THEME.font(17, QFont.Weight.Bold))
+            self.themed(self.title_label, lambda: self.title_label.setFont(THEME.font(17, QFont.Weight.Bold)))
             self.title_label.setStyleSheet(f"color: {THEME.colors.ink}; background: transparent;")
             header.addWidget(self.title_label)
             header.addStretch(1)
@@ -49,9 +53,44 @@ class Panel(QFrame):
                 close.clicked.connect(self.request_close)
                 header.addWidget(close)
             self.outer.addLayout(header)
+        THEME.changed.connect(self._retheme)
+
+    def themed(self, owner: QObject, apply: Callable[[], object]) -> None:
+        """Run ``apply`` now and again whenever the UI scale changes (fonts and
+        sizes come from THEME.px); dropped once ``owner`` is deleted."""
+        apply()
+        self._themed.append((owner, apply))
+
+    def _retheme(self) -> None:
+        alive = []
+        for owner, apply in self._themed:
+            if shiboken6.isValid(owner):
+                apply()
+                alive.append((owner, apply))
+        self._themed = alive
+        self.updateGeometry()
 
     def preferred_width(self) -> int:
         return THEME.px(self._width)
+
+    def focusNextPrevChild(self, next_: bool) -> bool:  # noqa: N802 - Qt naming
+        """Tab / Shift+Tab cycle through this panel only (the app behind is blurred)."""
+        chain: list[QWidget] = []
+        widget = self.nextInFocusChain()
+        while widget is not None and widget is not self and len(chain) < 500:
+            if (self.isAncestorOf(widget) and widget.isVisible() and widget.isEnabled()
+                    and widget.focusPolicy() & Qt.FocusPolicy.TabFocus):
+                chain.append(widget)
+            widget = widget.nextInFocusChain()
+        if not chain:
+            return True
+        focused = self.window().focusWidget()
+        if focused in chain:
+            index = (chain.index(focused) + (1 if next_ else -1)) % len(chain)
+        else:
+            index = 0 if next_ else len(chain) - 1
+        chain[index].setFocus(Qt.FocusReason.TabFocusReason if next_ else Qt.FocusReason.BacktabFocusReason)
+        return True
 
     def request_close(self) -> None:
         """Override to confirm (e.g. unsaved changes) before emitting ``closeRequested``."""
@@ -82,7 +121,15 @@ class _Layer(QWidget):
         self._dim = dim
         self._rise = Tween(self, self._place_panel, value=1.0, duration=THEME.SLOW)
         panel.setParent(self)
+        panel.installEventFilter(self)
         self.setGeometry(host.rect())
+        THEME.changed.connect(self._place_panel)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt naming
+        # The panel's content changed size (rows added, scale changed): re-place it.
+        if watched is self.panel and event.type() == QEvent.Type.LayoutRequest:
+            QTimer.singleShot(0, self, self._place_panel)
+        return False
 
     def _place_panel(self) -> None:
         margin = THEME.px(28)
@@ -130,6 +177,8 @@ class _Layer(QWidget):
 class OverlayHost(QWidget):
     """Covers the whole window; owns the stacked layers and the background blur."""
 
+    opened = Signal()  # a panel was put on top (toasts raise themselves above it)
+
     def __init__(self, root: QWidget, blurred: QWidget) -> None:
         super().__init__(root)
         self._blurred = blurred
@@ -137,7 +186,7 @@ class OverlayHost(QWidget):
         self._blur_effect: QGraphicsBlurEffect | None = None
         self._blur_anim = QVariantAnimation(self)
         self._blur_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._blur_anim.valueChanged.connect(self._set_blur)
+        connect_running(self._blur_anim, self._set_blur)
         self._blur_anim.finished.connect(self._blur_finished)
         self._escape = QShortcut(QKeySequence(Qt.Key.Key_Escape), root)
         self._escape.setContext(Qt.ShortcutContext.WindowShortcut)
@@ -177,6 +226,7 @@ class OverlayHost(QWidget):
             self._animate_blur(THEME.px(7))
         fade(layer, True, THEME.NORMAL, on_finished=panel.on_shown)
         layer.rise_in()
+        self.opened.emit()
 
     def close(self, panel: Panel, on_closed: Callable[[], None] | None = None) -> None:
         layer = next((item for item in self._layers if item.panel is panel), None)
@@ -184,6 +234,14 @@ class OverlayHost(QWidget):
             return
         self._layers.remove(layer)
         last = not self._layers
+        # While it fades out it takes no clicks or keys any more.
+        layer.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        focused = QApplication.focusWidget()
+        if focused is not None and layer.isAncestorOf(focused):
+            if self._layers:
+                self._layers[-1].panel.setFocus()
+            else:
+                focused.clearFocus()
 
         def finished() -> None:
             layer.deleteLater()
@@ -194,6 +252,7 @@ class OverlayHost(QWidget):
             if on_closed:
                 on_closed()
 
+        settle_fades(layer)  # no fades inside a fading layer (Qt cannot nest effects)
         fade(layer, False, THEME.FAST, on_finished=finished)
         if last:
             self._escape.setEnabled(False)
@@ -214,6 +273,7 @@ class OverlayHost(QWidget):
             self._blurred.setGraphicsEffect(self._blur_effect)
         if self._blur_effect is None:
             return
+        start = float(self._blur_effect.blurRadius())
         self._blur_anim.stop()
         duration = THEME.duration(THEME.NORMAL if target else THEME.FAST)
         if duration <= 0:
@@ -221,7 +281,7 @@ class OverlayHost(QWidget):
             self._blur_finished()
             return
         self._blur_anim.setDuration(duration)
-        self._blur_anim.setStartValue(float(self._blur_effect.blurRadius()))
+        self._blur_anim.setStartValue(start)
         self._blur_anim.setEndValue(float(target))
         self._blur_anim.start()
 
@@ -251,7 +311,7 @@ class ConfirmDialog(Panel):
         self._answered = False
         text = QLabel(message)
         text.setWordWrap(True)
-        text.setFont(THEME.font(13.5))
+        self.themed(text, lambda: text.setFont(THEME.font(13.5)))
         text.setStyleSheet(f"color: {THEME.colors.ink2}; background: transparent;")
         self.outer.addWidget(text)
         buttons = QHBoxLayout()

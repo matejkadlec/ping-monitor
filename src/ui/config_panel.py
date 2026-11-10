@@ -5,6 +5,7 @@ The Config overlay: servers table (inline editing) and monitoring settings.
 import threading
 from collections.abc import Callable
 
+import shiboken6
 from PySide6.QtCore import QObject, QRegularExpression, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QRegularExpressionValidator, QValidator
 from PySide6.QtWidgets import (
@@ -33,7 +34,7 @@ from src.core.settings import (
     Settings,
 )
 from src.ui import icons
-from src.ui.controls import CheckBox, IconButton, TextButton
+from src.ui.controls import CheckBox, IconButton, TextButton, fade
 from src.ui.overlay import ConfirmDialog, OverlayHost, Panel
 from src.ui.scrollbar import SmoothScrollBar
 from src.ui.theme import THEME
@@ -76,12 +77,15 @@ class _InfoIcon(QLabel):
 
     def __init__(self, tooltip: str) -> None:
         super().__init__()
-        size = THEME.px(17)
-        self.setPixmap(icons.pixmap("info", THEME.colors.ink, size, stroke=2.4))
-        self.setFixedSize(size, size)
         self.setToolTip(tooltip)
         self.setCursor(Qt.CursorShape.WhatsThisCursor)
         self.setStyleSheet("background: transparent;")
+        self.apply_theme()
+
+    def apply_theme(self) -> None:
+        size = THEME.px(17)
+        self.setPixmap(icons.pixmap("info", THEME.colors.ink, size, stroke=2.4))
+        self.setFixedSize(size, size)
 
 
 class _AutoHeightScroll(QScrollArea):
@@ -107,7 +111,7 @@ class _ServerRow:
         self.host.setValidator(QRegularExpressionValidator(QRegularExpression(r"[0-9.]{0,15}"), self.host))
         self.delete = IconButton("trash-2", "Delete this record", size=32, icon_size=17)
         for edit in (self.name, self.host):
-            edit.setFont(THEME.font(13))
+            panel.themed(edit, lambda e=edit: e.setFont(THEME.font(13)))
             edit.textChanged.connect(panel._changed)
             edit.textEdited.connect(lambda _text, e=edit: panel._set_invalid(e, False))
         self.name.returnPressed.connect(lambda: panel._name_entered(self))
@@ -135,6 +139,7 @@ class ConfigPanel(Panel):
         self._toasts = toasts
         self._rows: list[_ServerRow] = []
         self._check_token: object | None = None
+        self._closing = False  # saved: fading out, takes no more input
         self._signals = _Signals()
         self._signals.hostsChecked.connect(self._hosts_checked)
         self._signals.resolved.connect(self._resolved)
@@ -142,8 +147,8 @@ class ConfigPanel(Panel):
         body = QWidget()
         body.setStyleSheet("background: transparent;")
         self._body = QVBoxLayout(body)
-        self._body.setContentsMargins(0, 0, THEME.px(10), 0)
-        self._body.setSpacing(THEME.px(10))
+        self.themed(body, lambda: (self._body.setContentsMargins(0, 0, THEME.px(10), 0),
+                                   self._body.setSpacing(THEME.px(10))))
         self._build_servers(settings)
         self._build_settings(settings)
         self._body.addStretch(1)
@@ -154,10 +159,11 @@ class ConfigPanel(Panel):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setVerticalScrollBar(SmoothScrollBar(scroll))
         scroll.setWidget(body)
+        self._scroll = scroll
         self.outer.addWidget(scroll, 1)
 
         footer = QHBoxLayout()
-        footer.setSpacing(THEME.px(10))
+        self.themed(self, lambda: footer.setSpacing(THEME.px(10)))
         footer.addStretch(1)
         self.cancel_button = TextButton("Cancel", "secondary")
         self.save_button = TextButton("Save", "primary")
@@ -172,7 +178,7 @@ class ConfigPanel(Panel):
     # ------------------------------------------------------------- building
     def _section_title(self, text: str) -> QLabel:
         label = QLabel(text)
-        label.setFont(THEME.font(14, QFont.Weight.Bold))
+        self.themed(label, lambda: label.setFont(THEME.font(14, QFont.Weight.Bold)))
         label.setStyleSheet(f"color: {THEME.colors.ink}; background: transparent;")
         return label
 
@@ -187,13 +193,13 @@ class ConfigPanel(Panel):
         self._body.addLayout(header)
 
         self._table = QGridLayout()
-        self._table.setHorizontalSpacing(THEME.px(8))
-        self._table.setVerticalSpacing(THEME.px(8))
+        self.themed(self, lambda: (self._table.setHorizontalSpacing(THEME.px(8)),
+                                   self._table.setVerticalSpacing(THEME.px(8))))
         self._table.setColumnStretch(0, 3)
         self._table.setColumnStretch(1, 2)
         for column, text in enumerate(("Name", "IP")):
             label = QLabel(text)
-            label.setFont(THEME.font(11.5, QFont.Weight.DemiBold))
+            self.themed(label, lambda label=label: label.setFont(THEME.font(11.5, QFont.Weight.DemiBold)))
             label.setStyleSheet(f"color: {THEME.colors.ink3}; background: transparent;")
             self._table.addWidget(label, 0, column)
         self._body.addLayout(self._table)
@@ -209,8 +215,7 @@ class ConfigPanel(Panel):
         self._body.addSpacing(THEME.px(8))
 
         grid = QGridLayout()
-        grid.setHorizontalSpacing(THEME.px(14))
-        grid.setVerticalSpacing(THEME.px(12))
+        self.themed(self, lambda: (grid.setHorizontalSpacing(THEME.px(14)), grid.setVerticalSpacing(THEME.px(12))))
         grid.setColumnStretch(2, 1)
         self._grid = grid
         self.healthy = self._number_row(
@@ -229,7 +234,7 @@ class ConfigPanel(Panel):
             f"Minutes to preserve and display per tab, {PRESERVED_MIN}–{PRESERVED_MAX}. "
             "Use -1 to keep everything until the app is closed.", allow_forever=True)
         self.close_to_tray = CheckBox()
-        self.close_to_tray.setChecked(settings.close_to_tray)
+        self.close_to_tray.set_checked(settings.close_to_tray, animate=False)
         self.close_to_tray.toggled.connect(self._changed)
         self._label_row(4, "Close To Tray", "App will minimize to system tray icon instead of closing.",
                         self.close_to_tray)
@@ -250,7 +255,7 @@ class ConfigPanel(Panel):
 
     def _check_row(self, row: int, text: str, checked: bool, tooltip: str) -> CheckBox:
         checkbox = CheckBox()
-        checkbox.setChecked(checked)
+        checkbox.set_checked(checked, animate=False)
         checkbox.toggled.connect(self._changed)
         self._label_row(row, text, tooltip, checkbox)
         return checkbox
@@ -259,10 +264,12 @@ class ConfigPanel(Panel):
         label_box = QHBoxLayout()
         label_box.setSpacing(THEME.px(8))
         label = QLabel(text)
-        label.setFont(THEME.font(13, QFont.Weight.Medium))
+        self.themed(label, lambda: label.setFont(THEME.font(13, QFont.Weight.Medium)))
         label.setStyleSheet(f"color: {THEME.colors.ink}; background: transparent;")
         label_box.addWidget(label)
-        label_box.addWidget(_InfoIcon(tooltip), 0, Qt.AlignmentFlag.AlignVCenter)
+        info = _InfoIcon(tooltip)
+        self.themed(info, info.apply_theme)
+        label_box.addWidget(info, 0, Qt.AlignmentFlag.AlignVCenter)
         label_box.addStretch(1)
         self._grid.addLayout(label_box, row, 0, Qt.AlignmentFlag.AlignVCenter)
         self._grid.addWidget(widget, row, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -270,8 +277,7 @@ class ConfigPanel(Panel):
     def _number_row(self, row: int, text: str, unit: str, value: int, maximum: int, tooltip: str,
                     allow_forever: bool = False) -> QLineEdit:
         edit = QLineEdit(str(value))
-        edit.setFont(THEME.font(13, tabular=True))
-        edit.setFixedWidth(THEME.px(76))
+        self.themed(edit, lambda: (edit.setFont(THEME.font(13, tabular=True)), edit.setFixedWidth(THEME.px(76))))
         edit.setValidator(NumberValidator(maximum, allow_forever,
                                           lambda: self._toasts.warning(f"{text} can be at most {maximum}."), edit))
         edit.textChanged.connect(self._changed)
@@ -289,15 +295,28 @@ class ConfigPanel(Panel):
         return edit
 
     # ------------------------------------------------------------- servers
-    def _append_row(self, name: str, host: str) -> _ServerRow:
+    def _append_row(self, name: str, host: str, animate: bool = False) -> _ServerRow:
         row = _ServerRow(self, name, host)
+        previous = self._rows[-1] if self._rows else None
         self._rows.append(row)
-        index = len(self._rows)
+        index = self._table.rowCount()  # below everything (a deleted row may still be fading out)
         for column, widget in enumerate(row.widgets()):
             self._table.addWidget(widget, index, column)
+            if animate:
+                fade(widget, True, THEME.NORMAL)
+        if previous is not None:
+            # New widgets go to the end of the Tab order: put them after the previous row.
+            QWidget.setTabOrder(previous.delete, row.name)
+            QWidget.setTabOrder(row.name, row.host)
+            QWidget.setTabOrder(row.host, row.delete)
         self._update_delete_buttons()
-        self.updateGeometry()
+        self._scroll_content_changed()
         return row
+
+    def _scroll_content_changed(self) -> None:
+        if hasattr(self, "_scroll"):
+            self._scroll.updateGeometry()  # the overlay re-places (grows) the panel
+        self.updateGeometry()
 
     def _relayout_rows(self) -> None:
         for row in self._rows:
@@ -313,7 +332,18 @@ class ConfigPanel(Panel):
         for row in self._rows:
             row.delete.setToolTip("At least one server is required" if only_one else "Delete this record")
 
+    def _busy(self) -> bool:
+        """Checking the new servers or closing: the form takes no structural changes."""
+        if self._closing:
+            return True
+        if self._check_token is not None:
+            self._toasts.warning("Wait until the servers are checked.")
+            return True
+        return False
+
     def _add_row(self) -> None:
+        if self._busy():
+            return
         empty = next((row for row in self._rows if row.is_empty()), None)
         if empty is not None:
             self._toasts.warning("Fill in the empty row first.")
@@ -322,24 +352,41 @@ class ConfigPanel(Panel):
         if len(self._rows) >= MAX_SERVERS:
             self._toasts.warning(f"You can monitor up to {MAX_SERVERS} servers.")
             return
-        row = self._append_row("", "")
+        row = self._append_row("", "", animate=True)
         self._changed()
-        QTimer.singleShot(0, row.name.setFocus)
+
+        def focus_new_row() -> None:
+            row.name.setFocus()
+            self._scroll.ensureWidgetVisible(row.delete)
+
+        QTimer.singleShot(0, row.name, focus_new_row)
 
     def _delete_row(self, row: _ServerRow) -> None:
+        if self._busy():
+            return
         if len(self._rows) <= 1:
             self._toasts.warning("At least one server is required.")
             return
 
         def answered(yes: bool) -> None:
-            if not yes or row not in self._rows:
+            if not yes or not shiboken6.isValid(self) or self._closing or row not in self._rows:
                 return
             self._rows.remove(row)
-            for widget in row.widgets():
-                self._table.removeWidget(widget)
-                widget.deleteLater()
-            self._relayout_rows()
+            self._update_delete_buttons()
             self._changed()
+            remaining = list(row.widgets())
+
+            def faded(widget: QWidget) -> None:
+                remaining.remove(widget)
+                if not remaining and shiboken6.isValid(self):
+                    for item in row.widgets():
+                        self._table.removeWidget(item)
+                        item.deleteLater()
+                    self._relayout_rows()
+                    self._scroll_content_changed()
+
+            for widget in row.widgets():
+                fade(widget, False, THEME.FAST, on_finished=lambda w=widget: faded(w))
 
         label = row.name.text().strip() or "this record"
         self._overlay.open(ConfirmDialog(
@@ -373,11 +420,13 @@ class ConfigPanel(Panel):
             self._toasts.warning(f"Could not find an IP address for {name}.")
 
     def _host_entered(self, row: _ServerRow) -> None:
+        if row not in self._rows:
+            return
         index = self._rows.index(row)
         if index + 1 < len(self._rows):
             self._rows[index + 1].name.setFocus()
-        else:
-            self.focusNextChild()
+        elif self.save_button.isEnabled():
+            self.save_button.setFocus()  # Enter again saves
 
     # -------------------------------------------------------------- state
     def _collect(self) -> Settings | None:
@@ -407,7 +456,7 @@ class ConfigPanel(Panel):
 
     def _changed(self, *_args) -> None:
         if hasattr(self, "save_button"):
-            self.save_button.setEnabled(self.is_dirty())
+            self.save_button.setEnabled(self._check_token is None and not self._closing and self.is_dirty())
 
     def _set_invalid(self, edit: QLineEdit, invalid: bool) -> None:
         if bool(edit.property("invalid")) != invalid:
@@ -430,7 +479,7 @@ class ConfigPanel(Panel):
 
     # -------------------------------------------------------------- saving
     def _save(self) -> None:
-        if self._check_token is not None:
+        if self._check_token is not None or self._closing:
             return
         for row in self._rows:
             self._set_invalid(row.name, False)
@@ -450,6 +499,7 @@ class ConfigPanel(Panel):
             self._toasts.error(errors[0].message)
             if first_widget is not None:
                 first_widget.setFocus()
+                self._scroll.ensureWidgetVisible(first_widget)
             return
 
         known_hosts = {server.host for server in self._initial.servers}
@@ -487,6 +537,12 @@ class ConfigPanel(Panel):
                     pass
         self._signals.hostsChecked.emit(token, failed)
 
+    def _cancel_check(self) -> None:
+        if self._check_token is not None:
+            self._check_token = None
+            self.save_button.set_busy(False, "Save")
+            self._changed()
+
     def _hosts_checked(self, token: object, failed: list[str]) -> None:
         if token is not self._check_token:
             return
@@ -501,7 +557,7 @@ class ConfigPanel(Panel):
             hosts = ", ".join(failed)
             self._toasts.error(f"The server IP is invalid: {hosts} did not answer.")
             return
-        if settings is not None and settings == self._collect():
+        if settings is not None and settings == self._collect() and self._overlay.top_panel() is self:
             self._commit(settings)
         else:
             self._changed()  # edited while checking: let the user save again
@@ -520,20 +576,32 @@ class ConfigPanel(Panel):
                 self._autostart_initial = enabled
             except OSError as error:
                 self._toasts.error(f"Could not change Start With Windows: {error}")
+                self._changed()
                 return
+        self._closing = True
+        self._changed()
         self._toasts.success("Config saved.")
         self.closeRequested.emit()
 
+    def sync_close_to_tray(self, enabled: bool) -> None:
+        """Close To Tray was toggled in the tray menu while this panel is open."""
+        untouched = self.close_to_tray.isChecked() == self._initial.close_to_tray
+        self._initial = self._initial.with_changes(close_to_tray=enabled)
+        if untouched:
+            self.close_to_tray.set_checked(enabled)
+        self._changed()
+
     # ------------------------------------------------------------- closing
     def request_close(self) -> None:
-        if self._check_token is not None:
-            self._check_token = None
+        if self._closing:
+            return
+        self._cancel_check()
         if not self.is_dirty():
             self.closeRequested.emit()
             return
 
         def answered(yes: bool) -> None:
-            if yes:
+            if yes and shiboken6.isValid(self) and not self._closing:
                 self.closeRequested.emit()
 
         self._overlay.open(ConfirmDialog(
