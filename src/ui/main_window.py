@@ -2,6 +2,8 @@
 Main window: server tabs (top left), actions (top right), one page per server.
 """
 
+import math
+
 from PySide6.QtCore import QByteArray, QPoint, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
@@ -38,37 +40,57 @@ class _Root(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._image: QPixmap | None = None
-        self._scaled: QPixmap | None = None
-        self._image_opacity = Tween(self, self.update, value=0.0, duration=THEME.SLOW)
+        self._enabled = False
+        self._image: QPixmap | None = None  # the picture file, only while enabled
+        self._scaled: QPixmap | None = None  # window-sized copy, only while shown
+        self._image_opacity = Tween(self, self._opacity_changed, value=0.0, duration=THEME.SLOW)
         self._rescale_timer = QTimer(self)
         self._rescale_timer.setSingleShot(True)
         self._rescale_timer.setInterval(150)
         self._rescale_timer.timeout.connect(self._rescale)
 
     def set_background_image(self, enabled: bool) -> None:
+        self._enabled = enabled
         if enabled and self._image is None:
             path = asset_path("background.png")
             image = QPixmap(str(path)) if path.exists() else QPixmap()
             self._image = None if image.isNull() else image
-        if enabled:
+        if enabled and self.isVisible():
             self._rescale()
         self._image_opacity.to(1.0 if enabled and self._image is not None else 0.0)
 
-    def _rescale(self) -> None:
+    def _opacity_changed(self) -> None:
+        if not self._enabled and self._image_opacity.value <= 0.001:
+            self._image = self._scaled = None  # turned off and faded out: free the memory
+        self.update()
+
+    def _target_size(self) -> QSize:
+        ratio = self.devicePixelRatioF()
+        return QSize(math.ceil(self.width() * ratio), math.ceil(self.height() * ratio))
+
+    def _rescale(self, repaint: bool = True) -> None:
         if self._image is None or self.width() <= 0 or self.height() <= 0:
             return
         ratio = self.devicePixelRatioF()
-        target = QSize(round(self.width() * ratio), round(self.height() * ratio))
-        scaled = self._image.scaled(target, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        scaled = self._image.scaled(self._target_size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                                     Qt.TransformationMode.SmoothTransformation)
         scaled.setDevicePixelRatio(ratio)
         self._scaled = scaled
-        self.update()
+        if repaint:
+            self.update()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self._enabled:
+            self._rescale()  # sharp from the first frame (the size is final now)
+
+    def hideEvent(self, event) -> None:
+        super().hideEvent(event)
+        self._scaled = None  # in the tray: keep only the picture file in memory
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        if self._image_opacity.value > 0:
+        if self._enabled and self.isVisible():
             self._rescale_timer.start()
         self.resized.emit()
 
@@ -76,7 +98,14 @@ class _Root(QWidget):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(THEME.colors.abyss))
         opacity = self._image_opacity.value
-        if opacity <= 0.001 or self._scaled is None:
+        if opacity <= 0.001 or self._image is None:
+            return
+        if self._scaled is None:
+            self._rescale(repaint=False)
+        elif (self._scaled.devicePixelRatio() != self.devicePixelRatioF()
+              and not self._rescale_timer.isActive()):
+            self._rescale_timer.start()  # moved to a screen with another scaling
+        if self._scaled is None:
             return
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         size = self._scaled.deviceIndependentSize()
@@ -310,7 +339,10 @@ class MainWindow(QMainWindow):
     def restore_state(self, state: dict) -> None:
         geometry = state.get("geometry")
         if isinstance(geometry, str) and geometry:
-            self.restoreGeometry(QByteArray.fromBase64(geometry.encode("ascii")))
+            try:
+                self.restoreGeometry(QByteArray.fromBase64(geometry.encode("ascii")))
+            except ValueError:  # hand-edited (non-ASCII): keep the default placement
+                pass
         tab = state.get("tab")
         if isinstance(tab, str) and tab in self._order:
             self.tabs.set_current(self._order.index(tab), animate=False)

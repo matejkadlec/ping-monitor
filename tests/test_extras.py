@@ -36,34 +36,66 @@ def controller(qapp, tmp_path, monkeypatch):
     ctrl.quit()
 
 
-def feed(ctrl, rtts):
-    server = ctrl.settings.servers[0]
-    start = datetime.now() - timedelta(seconds=len(rtts))
+def feed(ctrl, rtts, start: datetime | None = None, server=None):
+    server = server or ctrl.settings.servers[0]
+    start = start or datetime.now() - timedelta(seconds=len(rtts))
     for offset, rtt in enumerate(rtts):
         status = PingStatus.TIMEOUT if rtt is None else PingStatus.OK
         ctrl._on_result(PingResult(server.name, server.host, start + timedelta(seconds=offset), status, rtt))
 
 
+def no_waiting(ctrl) -> None:
+    """Announce right away (the timing rules are tested in test_alerts.py)."""
+    from src.core.alerts import HealthAlerts
+
+    ctrl._alerts = HealthAlerts(alert_gap_s=0, recovery_hold_s=0)
+
+
 def test_notifications_on_failing_and_recovery(controller, monkeypatch):
     sent = []
     monkeypatch.setattr(controller.tray, "notify", lambda title, message, warning=False: sent.append(title))
+    no_waiting(controller)
     feed(controller, [20, 20])
     assert sent == []
     feed(controller, [None, None, None])
     assert sent == ["cloudflare.com is failing"]
     feed(controller, [None])
     assert len(sent) == 1  # still failing: no repeat
-    controller.reset_server("cloudflare.com")  # e.g. the spikes aged out
-    feed(controller, [20])
+    feed(controller, [20, 20], start=datetime.now() + timedelta(minutes=6))  # the losses aged out
     assert sent[-1] == "cloudflare.com is healthy again"
 
 
-def test_notifications_can_be_turned_off(controller, monkeypatch):
+def test_no_failing_alert_right_after_start(controller, monkeypatch):
     sent = []
     monkeypatch.setattr(controller.tray, "notify", lambda *args, **kwargs: sent.append(args))
-    controller.apply_settings(controller.settings.with_changes(notifications=False))
-    feed(controller, [None, None, None])
+    feed(controller, [None, None, None])  # e.g. Wi-Fi still connecting after sign-in
     assert sent == []
+
+
+def test_notifications_can_be_turned_off_without_stray_messages_later(controller, monkeypatch):
+    sent = []
+    monkeypatch.setattr(controller.tray, "notify", lambda title, *args, **kwargs: sent.append(title))
+    no_waiting(controller)
+    controller.apply_settings(controller.settings.with_changes(notifications=False))
+    no_waiting(controller)  # settings changes start a short quiet period
+    feed(controller, [None, None, None])
+    feed(controller, [20, 20], start=datetime.now() + timedelta(minutes=6))  # recovered silently
+    controller.apply_settings(controller.settings.with_changes(notifications=True))
+    feed(controller, [20], start=datetime.now() + timedelta(minutes=7))
+    assert sent == []
+
+
+def test_another_tray_server_starts_without_an_incident(controller, monkeypatch):
+    sent = []
+    monkeypatch.setattr(controller.tray, "notify", lambda title, *args, **kwargs: sent.append(title))
+    no_waiting(controller)
+    feed(controller, [None, None, None])
+    assert sent == ["cloudflare.com is failing"]
+    servers = controller.settings.servers
+    controller.apply_settings(controller.settings.with_changes(servers=(servers[1], servers[0], *servers[2:])))
+    no_waiting(controller)
+    feed(controller, [20, 20], server=controller.settings.servers[0])
+    assert sent == ["cloudflare.com is failing"]  # no "google.com is healthy again"
 
 
 def test_background_picture_toggle(qapp, controller):
@@ -97,3 +129,68 @@ def test_autostart_command_points_at_the_app():
     if not autostart.is_supported():
         assert autostart.is_enabled() is False
         autostart.set_enabled(True)  # no-op elsewhere
+
+
+def test_background_picture_is_sharp_and_released(qapp, controller):
+    window = controller.window
+    root = window._root
+    controller.apply_settings(controller.settings.with_changes(background_image=True))
+    window.show()
+    window.resize(1100, 700)
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        qapp.processEvents()
+    target, scaled = root._target_size(), root._scaled.size()  # covers the window, aspect kept
+    assert scaled.width() >= target.width() and scaled.height() >= target.height()
+    assert target.width() in (scaled.width(), 0) or target.height() == scaled.height()
+    controller.apply_settings(controller.settings.with_changes(background_image=False))
+    deadline = time.monotonic() + 1.5
+    while time.monotonic() < deadline and root._image is not None:
+        qapp.processEvents()
+    assert root._image is None and root._scaled is None
+
+
+def test_hand_edited_window_state_never_stops_the_start(qapp, controller, tmp_path):
+    (tmp_path / "ui_state.json").write_text('{"geometry": "Matěj", "tab": 5}', encoding="utf-8")
+    from src.app import AppController
+
+    second = AppController(qapp, start_hidden=True)
+    second.quit()
+
+
+class FakeRegistry:
+    def __init__(self) -> None:
+        self.values: dict[tuple[str, str], object] = {}
+
+    def read(self, path, name):
+        return self.values.get((path, name))
+
+    def write_string(self, path, name, value):
+        self.values[(path, name)] = value
+
+    def delete(self, path, name):
+        self.values.pop((path, name), None)
+
+
+def test_autostart_follows_windows_startup_settings(monkeypatch):
+    fake = FakeRegistry()
+    monkeypatch.setattr(autostart, "registry", fake)
+    monkeypatch.setattr(autostart, "is_supported", lambda: True)
+    run = (autostart.RUN_KEY, autostart.VALUE_NAME)
+    approved = (autostart.APPROVED_KEY, autostart.VALUE_NAME)
+
+    autostart.set_enabled(True)
+    assert fake.values[run] == autostart.launch_command() and autostart.is_enabled()
+    fake.values[approved] = bytes([3, 0, 0, 0]) + bytes(8)  # "Disabled" in Task Manager
+    assert not autostart.is_enabled()
+    autostart.set_enabled(True)  # turning it on in the app really turns it on again
+    assert approved not in fake.values and autostart.is_enabled()
+
+    fake.values[run] = '"C:\\old place\\pythonw.exe" "C:\\old place\\main.py" --minimized'
+    autostart.refresh()  # the folder moved: the entry follows this copy
+    assert fake.values[run] == autostart.launch_command()
+
+    autostart.set_enabled(False)
+    assert run not in fake.values and not autostart.is_enabled()
+    autostart.refresh()
+    assert run not in fake.values

@@ -14,6 +14,8 @@ import time
 from PySide6.QtCore import QEasingCurve, QObject, QPropertyAnimation, Qt, QTimer, Signal
 from PySide6.QtWidgets import QApplication
 
+from src.core import autostart
+from src.core.alerts import STARTUP_QUIET_S, WAKE_QUIET_S, Alert, HealthAlerts
 from src.core.engine import PingEngine
 from src.core.fileio import atomic_write_text
 from src.core.models import HealthStatus, PingResult, PingStatus, ServerSpec, is_problem
@@ -35,7 +37,7 @@ LOGGER = logging.getLogger(__name__)
 WATCHDOG_INTERVAL_MS = 2_000
 CLEANUP_INTERVAL_MS = 60 * 60 * 1000
 UI_STATE_FILE_NAME = "ui_state.json"
-NOTIFY_COOLDOWN_S = 60.0
+SETTINGS_QUIET_S = 30.0  # no "failing" alert right after editing the config
 
 
 def short_value(result: PingResult) -> str | None:
@@ -64,8 +66,8 @@ class AppController(QObject):
         self._quitting = False
         self._tray_hint_shown = False
         self._tray_health = HealthStatus.UNKNOWN
-        self._failing_alert = False
-        self._last_failing_alert = -NOTIFY_COOLDOWN_S
+        self._alerts = HealthAlerts()
+        self._alerts.quiet(time.monotonic(), STARTUP_QUIET_S)  # Wi-Fi may still be connecting
 
         self.spike_log = SpikeLog(data_dir())
         self.spike_log.start_session()
@@ -89,7 +91,14 @@ class AppController(QObject):
         self.window.logsRequested.connect(self.open_logs)
         self.window.set_servers(self._page_specs())
         self.window.set_background_image(self.settings.background_image)
-        self.window.restore_state(self._load_ui_state())
+        try:
+            self.window.restore_state(self._load_ui_state())
+        except Exception:  # a hand-edited ui_state.json must never stop the app
+            LOGGER.warning("Ignoring the saved window state", exc_info=True)
+        try:
+            autostart.refresh()  # the folder may have moved since it was enabled
+        except OSError:
+            LOGGER.warning("Checking Start With Windows failed", exc_info=True)
 
         self.tray = TrayController(self)
         self.tray.showRequested.connect(self.show_window)
@@ -150,6 +159,8 @@ class AppController(QObject):
             return  # result of a server that was just removed or changed
         if self.engine.paused:
             return  # queued just before pausing
+        if result.status is PingStatus.GAP:
+            self._alerts.quiet(time.monotonic(), WAKE_QUIET_S)  # back from sleep: network reconnecting
         evicted = history.add(result)
         if is_problem(result, self.settings.ping_threshold_degraded):
             entry = self.spike_log.record(result)
@@ -163,9 +174,9 @@ class AppController(QObject):
         self.window.update_tab(result.server, history.health(), self._last_values.get(result.server, ""))
         tray_server = self.tray_server
         if tray_server is not None and result.server == tray_server.name:
-            self._update_tray()
+            self._update_tray(alerts=True)
 
-    def _update_tray(self) -> None:
+    def _update_tray(self, alerts: bool = False) -> None:
         tray_server = self.tray_server
         if tray_server is None:
             return
@@ -175,28 +186,23 @@ class AppController(QObject):
         if self.engine.paused:
             lines.insert(0, "Paused")
         self.tray.set_status(status, lines)
-        previous, self._tray_health = self._tray_health, status
-        if previous is not status:
-            self._notify_health_change(tray_server.name, previous, status)
+        self._tray_health = status
+        if alerts:
+            self._alert(tray_server.name, self._alerts.update(status, time.monotonic()))
 
-    def _notify_health_change(self, name: str, previous: HealthStatus, status: HealthStatus) -> None:
-        """Windows notification when the tray server starts failing and when it recovers."""
-        if not self.settings.notifications:
+    def _alert(self, name: str, alert: Alert | None) -> None:
+        """Windows notification when the tray server starts failing and when it is
+        healthy again (the timing rules live in HealthAlerts)."""
+        if alert is None or not self.settings.notifications:
             return
-        now = time.monotonic()
-        if status is HealthStatus.FAILING and not self._failing_alert:
-            if now - self._last_failing_alert < NOTIFY_COOLDOWN_S:
-                return  # flapping: do not spam
-            self._failing_alert = True
-            self._last_failing_alert = now
+        if alert is Alert.FAILING:
             self.tray.notify(
                 f"{name} is failing",
                 f"{STATUS_HIT_THRESHOLD} or more pings above {self.settings.ping_threshold_degraded} ms "
                 f"or lost in the last {STATUS_WINDOW_SECONDS // 60} minutes.",
                 warning=True,
             )
-        elif status is HealthStatus.HEALTHY and self._failing_alert:
-            self._failing_alert = False
+        else:
             self.tray.notify(f"{name} is healthy again", "Pings are back to normal.")
 
     # ------------------------------------------------------------ actions
@@ -206,6 +212,8 @@ class AppController(QObject):
             return
         history.reset()
         self._last_values.pop(name, None)
+        if self.tray_server is not None and name == self.tray_server.name:
+            self._alerts.reset()
         self.window.reload_page(name)
         self.window.update_tab(name, HealthStatus.UNKNOWN, "")
         self._update_tray()
@@ -242,6 +250,11 @@ class AppController(QObject):
         save_settings(settings)
         previous = self.settings
         self.settings = settings
+        old_tray = (previous.servers[0].name, previous.servers[0].host) if previous.servers else None
+        new_tray = (settings.servers[0].name, settings.servers[0].host) if settings.servers else None
+        if old_tray != new_tray:
+            self._alerts.reset()  # another server drives the tray now
+        self._alerts.quiet(time.monotonic(), SETTINGS_QUIET_S)
         self._sync_histories()
         self.engine.set_interval(settings.ping_interval)
         self.engine.set_servers(settings.servers)
