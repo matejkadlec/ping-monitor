@@ -16,6 +16,9 @@ This file is for coding agents working on this repository.
 ping-monitor/
 ├── main.py                  # entry point (reports missing dependencies in a message box)
 ├── run.vbs / setup.bat      # Windows launcher / installer (CRLF, see .gitattributes)
+├── build.bat                # builds dist\PingMonitor.exe (PyInstaller, build\env)
+├── packaging/               # PingMonitor.spec (one-file exe, no console, version info)
+├── .github/workflows/       # build-exe.yml: Windows build + smoke test, draft release "exe-latest"
 ├── assets/                  # icon, background picture, fonts (OFL), Lucide icons (ISC)
 ├── src/
 │   ├── app.py               # AppController: wires everything, run()
@@ -65,6 +68,7 @@ ping-monitor/
 - All file writes go through `fileio.atomic_write_text` or are wrapped so file errors never stop the app.
 - Settings stay backward compatible with older `app_config.json` files.
 - Only `PySide6-Essentials` at runtime. Update `uv.lock` (`uv lock`) whenever `pyproject.toml` changes.
+- The exe (`is_frozen()`) reads assets from the PyInstaller bundle and keeps data in `%LOCALAPPDATA%\PingMonitor`; new assets must also be listed in `packaging/PingMonitor.spec`.
 
 ## UI Conventions
 

@@ -39,10 +39,22 @@ A ping monitor that sits in your system tray and keeps an eye on your connection
 
 ## 🛠️ Installation
 
+### The .exe (no Python needed)
+
+`PingMonitor.exe` is one file: put it anywhere and start it (pin it to the taskbar or Start if you like). Build it with `build.bat` (below); every push to `master` also builds it on GitHub Actions and puts it on the draft release **PingMonitor.exe (latest build)**.
+
+The exe keeps its settings and logs in `%LOCALAPPDATA%\PingMonitor`. On its first start next to this project (in the project folder or in `dist`) it takes over the settings from `logs\app_config.json`. It starts in a few seconds, because it unpacks itself first.
+
+### From source
+
 1. Install [Python 3.14](https://www.python.org/downloads/) or newer.
 2. Clone or download this repository.
 3. Run `setup.bat`. It creates the `venv` folder, installs the dependencies from `uv.lock` (only PySide6) and offers to start the app.
 4. Start the app any time with `run.vbs` (no console window). For the taskbar, create a shortcut with the target `wscript.exe "C:\path\to\ping-monitor\run.vbs"` and pin that (a `.vbs` file itself cannot be pinned).
+
+### Building the .exe
+
+Run `build.bat` (needs Python 3.14). It prepares its own environment in `build\env` (PyInstaller, pinned in `uv.lock`), builds `packaging\PingMonitor.spec` and leaves `dist\PingMonitor.exe`.
 
 ## 📖 Usage
 
@@ -86,11 +98,11 @@ Click the gear icon (or press `Ctrl+,`). Hover the ⓘ icons for the allowed val
 | Background Image | off | The blue picture behind the app instead of the plain background. |
 | Start With Windows | off | Start in the tray when you sign in. |
 
-Settings are saved to `logs/app_config.json` (the format of older versions still loads). Start With Windows is the `PingMonitor` entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`; switching it off in Task Manager or in Settings › Apps › Startup is respected. If you move the app's folder, start it once with `run.vbs` and the entry is repaired.
+Settings are saved to `logs/app_config.json`, or `%LOCALAPPDATA%\PingMonitor\app_config.json` for the exe (the format of older versions still loads). Start With Windows is the `PingMonitor` entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`; switching it off in Task Manager or in Settings › Apps › Startup is respected. If you move the app's folder (or the exe), start it once by hand and the entry is repaired. Switching from `run.vbs` to the exe: turn Start With Windows off and on in the exe.
 
 ## 📂 Files
 
-Everything else the app writes lives in the `logs` folder (the **Open log folder** button in the logs panel opens it):
+Everything else the app writes lives in the `logs` folder, for the exe in `%LOCALAPPDATA%\PingMonitor` (the **Open log folder** button in the logs panel opens it):
 
 - `app_config.json` – settings
 - `ping_spikes_current.log` – spikes of the running session

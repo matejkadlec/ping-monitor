@@ -120,3 +120,32 @@ def test_preserved_minutes_loading(tmp_path, raw, expected):
     text = json.dumps({"preserved_minutes": raw}) if raw != "Infinity" else '{"preserved_minutes": Infinity}'
     path.write_text(text, encoding="utf-8")
     assert load_settings(path).preserved_minutes == expected
+
+
+def test_app_version_matches_pyproject():
+    import tomllib
+    from pathlib import Path
+
+    from src.core.paths import APP_VERSION
+
+    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
+    assert APP_VERSION == pyproject["project"]["version"]
+
+
+def test_the_exe_takes_over_the_settings_of_the_source_version(tmp_path, monkeypatch):
+    import sys
+
+    from src.core import settings as settings_module
+    from src.core.paths import source_data_dirs
+
+    project = tmp_path / "ping-monitor"
+    (project / "dist").mkdir(parents=True)
+    (project / "logs").mkdir()
+    (project / "logs" / "app_config.json").write_text('{"ping_interval": 7}', encoding="utf-8")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(project / "dist" / "PingMonitor.exe"))
+    assert project / "logs" in source_data_dirs()
+    exe_data = tmp_path / "LocalAppData" / "PingMonitor"
+    exe_data.mkdir(parents=True)
+    loaded = settings_module.load_settings(exe_data / "app_config.json")
+    assert loaded.ping_interval == 7

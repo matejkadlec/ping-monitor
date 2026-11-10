@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "Ping Monitor"
+APP_VERSION = "2.0.0"  # keep in sync with pyproject.toml (a test checks it)
 APP_ID = "PingMonitor"
 # Windows AppUserModelID (taskbar grouping + notification identity).
 APP_USER_MODEL_ID = "matka.pingmonitor.2"
@@ -36,6 +37,15 @@ def assets_dir() -> Path:
 
 def asset_path(*parts: str) -> Path:
     return assets_dir().joinpath(*parts)
+
+
+def source_data_dirs() -> list[Path]:
+    """Where the source version keeps its data, seen from a frozen exe that sits
+    in the project folder or in its dist folder (for a one-time settings import)."""
+    if not is_frozen():
+        return []
+    exe_dir = Path(sys.executable).resolve().parent
+    return [exe_dir / "logs", exe_dir.parent / "logs"]
 
 
 def data_dir() -> Path:

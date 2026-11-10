@@ -20,7 +20,7 @@ from src.core.alerts import STARTUP_QUIET_S, WAKE_GAP_S, WAKE_QUIET_S, Alert, He
 from src.core.engine import PingEngine
 from src.core.fileio import atomic_write_text
 from src.core.models import HealthStatus, PingResult, PingStatus, ServerSpec, is_problem
-from src.core.paths import APP_NAME, APP_USER_MODEL_ID, asset_path, data_dir
+from src.core.paths import APP_NAME, APP_USER_MODEL_ID, APP_VERSION, asset_path, data_dir, is_frozen
 from src.core.settings import Settings, load_settings, save_settings
 from src.core.spike_log import SpikeLog
 from src.core.stats import ServerHistory
@@ -380,6 +380,7 @@ def run(argv: list[str]) -> int:
         LOGGER.info("Ping Monitor is already running, showing the existing window")
         return 0
     instance.listen()
+    LOGGER.info("Ping Monitor %s started (%s)", APP_VERSION, "exe" if is_frozen() else "from source")
 
     THEME.load_fonts()
     THEME.set_motion(win32.animations_enabled())

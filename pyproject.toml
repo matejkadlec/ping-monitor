@@ -11,6 +11,10 @@ dependencies = [
 dev = [
     "pytest>=8.3",
 ]
+# Only for build.bat (PingMonitor.exe); setup.bat does not install it.
+build = [
+    "pyinstaller>=6.16",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

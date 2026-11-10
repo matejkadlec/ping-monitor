@@ -28,8 +28,9 @@ logs/
 .vscode/
 .idea/
 
-# GitHub
-.github/
+# GitHub (only the workflows are part of the project)
+.github/*
+!.github/workflows/
 
 # Untracked
 untracked/

@@ -15,7 +15,7 @@ from typing import Any
 from src.core import validation
 from src.core.fileio import atomic_write_text
 from src.core.models import ServerSpec
-from src.core.paths import data_dir
+from src.core.paths import data_dir, source_data_dirs
 
 LOGGER = logging.getLogger(__name__)
 
@@ -199,6 +199,10 @@ def settings_path(directory: Path | None = None) -> Path:
 
 def load_settings(path: Path | None = None) -> Settings:
     path = path or settings_path()
+    if not path.exists():
+        path = next((candidate for candidate in map(settings_path, source_data_dirs()) if candidate.exists()), path)
+        if path.exists():
+            LOGGER.info("First start of the exe: using the settings of the source version from %s", path)
     if not path.exists():
         return Settings()
     try:
