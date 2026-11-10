@@ -8,7 +8,7 @@ This file is for coding agents working on this repository.
 - The project lives at `C:\Users\matka\projects\ping-monitor` (from WSL: `/mnt/c/Users/matka/projects/ping-monitor`).
 - Development and tests also work on Linux/WSL: `PING_MONITOR_SIMULATE=1` replaces real pings with simulated ones and `QT_QPA_PLATFORM=offscreen` runs the UI without a display (the tests set it themselves).
 - `PING_MONITOR_DATA_DIR=<folder>` redirects settings and logs (tests use a temp folder).
-- `setup.bat` and `run.vbs` are Windows scripts: from WSL run them with `cmd.exe /c setup.bat` and `wscript.exe run.vbs`.
+- `setup.bat` and `run.vbs` are Windows scripts: from WSL run them with `cmd.exe /c setup.bat` and `wscript.exe run.vbs`. `setup.bat` waits for input (it is meant for the user), so do not run it from an agent shell.
 
 ## Structure
 
@@ -71,7 +71,7 @@ ping-monitor/
 - **Anything clickable shows the pointer (hand) cursor on hover.** Info icons use the help cursor.
 - No instant state changes: hovers, shows/hides and color changes fade or glide (`Tween`, `fade()`, `THEME.duration()` returns 0 when Windows animations are off). Ambient motion pauses while an overlay is open.
 - Text uses the text colors; green/yellow/red only mark status (with a label or value next to them).
-- New panels subclass `overlay.Panel`; confirmations use `ConfirmDialog`, feedback uses the toasts. Fonts and sizes set in a panel go through `Panel.themed()` so they follow scale changes; panels keep the keyboard focus inside (Tab cycles, window shortcuts wait).
+- New panels subclass `overlay.Panel`; confirmations use `ConfirmDialog`, feedback uses the toasts. Fonts and sizes set in a panel go through `Panel.themed()` so they follow scale changes; panels keep the keyboard focus inside (Tab cycles, window shortcuts are ignored, Esc closes).
 - Fonts: Montserrat for UI, JetBrains Mono for ping rows and logs.
 - Long lists use `FastListView` (fixed row height): `QListView` re-lays out every row through the Python model on each insert.
 - Animation pitfalls: connect `QVariantAnimation.valueChanged` with `controls.connect_running()` (a stopped animation emits stale values while being reconfigured), call `settle_fades()` before putting a graphics effect on an ancestor (Qt cannot nest effects), and stop timers when hidden or minimized.
@@ -81,7 +81,7 @@ ping-monitor/
 1. Read `untracked/TODO.md` and update task statuses when you start/finish a section.
 2. Prefer incremental patches over broad rewrites; keep `src/core` free of Qt.
 3. Run the tests: `uv run pytest` on Windows; from WSL use a Linux environment outside `/mnt/c`, e.g. `UV_PROJECT_ENVIRONMENT=~/.venvs/pm uv run pytest -q -p no:cacheprovider` (a `.venv` inside the Windows folder is slow and clashes with the Windows one).
-4. For UI changes, look at the result: run the app with `PING_MONITOR_SIMULATE=1 PING_MONITOR_DATA_DIR=$(mktemp -d)` so fake spikes never reach the real `logs/` (on Windows, quit the running app first: a second start only shows its window). Offscreen `QWidget.grab()` screenshots work too.
+4. For UI changes, look at the result with simulated pings and a temporary data folder, so fake spikes never reach the real `logs/`: `PING_MONITOR_SIMULATE=1 PING_MONITOR_DATA_DIR=$(mktemp -d) python main.py` (bash) or `$env:PING_MONITOR_SIMULATE=1; $env:PING_MONITOR_DATA_DIR="$env:TEMP\pm"; venv\Scripts\python main.py` (PowerShell). On Windows quit the running app first: a second start only shows its window. Offscreen `QWidget.grab()` screenshots work too.
 5. Keep naming consistent (`ping_spike`, `healthy/degraded/failing`).
 6. When debugging, inspect `logs/app.log` early (worker stalls, gaps and file errors are logged there).
 

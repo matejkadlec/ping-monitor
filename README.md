@@ -62,13 +62,13 @@ A ping monitor that sits in your system tray and keeps an eye on your connection
 | `End` | Jump to the latest ping (when the stream has the focus) |
 | `Esc` | Close the open panel |
 
-While a panel (Config, Logs, a question) is open, `Tab` stays inside it and the shortcuts above wait until it is closed.
+While a panel (Config, Logs, a question) is open, `Tab` stays inside it and the other shortcuts do nothing until it is closed (`Esc` closes it).
 
 ### Notifications
 
-- "*server* is failing" once per incident, at most every 5 minutes. If the server is still failing when those 5 minutes are over, you still get it.
-- "*server* is healthy again" after it has been healthy for 2 minutes, so a connection that flaps around the limit does not keep notifying.
-- Nothing during the first minute after the app starts or the PC wakes up (Wi-Fi is often still connecting), and for 30 seconds after you save the config.
+- "*server* is failing" once per incident, at most every 5 minutes. If the server keeps having problems after those 5 minutes, the notification comes then.
+- "*server* is healthy again" when its health is back to green and its last lost or slow ping is at least a minute old, so a connection that flaps around the limit does not keep notifying.
+- Lost pings in the first minute after the app starts or the PC wakes from sleep (Wi-Fi is often still reconnecting) and in the 30 seconds after you save the config never cause a "failing" notification; problems that go on after that still do.
 
 ## ⚙️ Configuration
 
@@ -86,11 +86,11 @@ Click the gear icon (or press `Ctrl+,`). Hover the ⓘ icons for the allowed val
 | Background Image | off | The blue picture behind the app instead of the plain background. |
 | Start With Windows | off | Start in the tray when you sign in. |
 
-Settings are saved to `logs/app_config.json` (the format of older versions still loads). Start With Windows is the `PingMonitor` entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`; switching it off in Task Manager or in Settings › Apps › Startup is respected, and the entry follows the app when you move its folder (it is updated the next time the app starts).
+Settings are saved to `logs/app_config.json` (the format of older versions still loads). Start With Windows is the `PingMonitor` entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`; switching it off in Task Manager or in Settings › Apps › Startup is respected. If you move the app's folder, start it once with `run.vbs` and the entry is repaired.
 
 ## 📂 Files
 
-Everything the app writes lives in the `logs` folder (the **Open log folder** button in the logs panel opens it):
+Everything else the app writes lives in the `logs` folder (the **Open log folder** button in the logs panel opens it):
 
 - `app_config.json` – settings
 - `ping_spikes_current.log` – spikes of the running session
@@ -101,7 +101,7 @@ Everything the app writes lives in the `logs` folder (the **Open log folder** bu
 ## 🐞 Troubleshooting
 
 - **The app does not start**: run `setup.bat` again; a missing dependency is reported in a message box. Details are in `logs/app.log`.
-- **Starting it again does nothing visible**: it is already running in the tray; the second start brings its window to the front.
+- **No window appears**: it may already be running in the tray (started with Windows or closed to the tray); click the tray icon or start it again.
 - **Tray icon missing**: check the notification area settings of Windows (hidden icons).
 - **Every ping times out**: check the firewall (ICMP echo) and your connection.
 - **No samples for X s rows**: Windows did not let the app run during that time (sleep, heavy load). The ping values themselves are still correct.
