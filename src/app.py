@@ -20,7 +20,7 @@ from src.core.alerts import STARTUP_QUIET_S, WAKE_GAP_S, WAKE_QUIET_S, Alert, He
 from src.core.engine import PingEngine
 from src.core.fileio import atomic_write_text
 from src.core.models import HealthStatus, PingResult, PingStatus, ServerSpec, is_problem
-from src.core.paths import APP_NAME, APP_USER_MODEL_ID, data_dir
+from src.core.paths import APP_NAME, APP_USER_MODEL_ID, asset_path, data_dir
 from src.core.settings import Settings, load_settings, save_settings
 from src.core.spike_log import SpikeLog
 from src.core.stats import ServerHistory
@@ -65,7 +65,6 @@ class AppController(QObject):
         self._hosts: dict[str, str] = {}
         self._last_values: dict[str, str] = {}
         self._quitting = False
-        self._tray_hint_shown = False
         self._tray_health = HealthStatus.UNKNOWN
         self._alerts = HealthAlerts()
         self._alerts.quiet(time.monotonic(), STARTUP_QUIET_S)  # Wi-Fi may still be connecting
@@ -341,10 +340,7 @@ class AppController(QObject):
 
     def _on_close_requested(self) -> None:
         if self.settings.close_to_tray:
-            self.hide_window()
-            if not self._tray_hint_shown:
-                self._tray_hint_shown = True
-                self.tray.notify(APP_NAME, "Still pinging in the tray. Right-click the icon to exit.")
+            self.hide_window()  # silently: the tray icon shows it is still running
         else:
             self.quit()
 
@@ -373,6 +369,8 @@ def apply_app_style(app: QApplication) -> None:
 def run(argv: list[str]) -> int:
     configure_logging()
     win32.set_app_user_model_id(APP_USER_MODEL_ID)
+    # Name + icon for notifications (otherwise Windows shows the raw ID as the sender).
+    win32.register_app_identity(APP_USER_MODEL_ID, APP_NAME, asset_path("icon.ico"), data_dir())
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)

@@ -2,7 +2,7 @@
 Small Windows integrations (all no-ops elsewhere):
 
 * dark title bar tinted to the app background (Windows 10 2004+ / Windows 11),
-* taskbar identity (AppUserModelID),
+* taskbar identity (AppUserModelID) and the sender name + icon of notifications,
 * the OS "Animation effects" preference,
 * a native message box for fatal start-up errors (works without Qt).
 """
@@ -36,6 +36,29 @@ def set_app_user_model_id(app_id: str) -> None:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
     except Exception:
         LOGGER.debug("SetCurrentProcessExplicitAppUserModelID failed", exc_info=True)
+
+
+def register_app_identity(app_id: str, display_name: str, icon, data_folder) -> None:
+    """Windows names the sender of a notification after the AppUserModelID; for
+    an app that is not installed it shows the raw ID unless the ID is registered
+    under HKCU\\Software\\Classes\\AppUserModelId with a name and an icon."""
+    if not IS_WINDOWS:
+        return
+    try:
+        import shutil
+        import winreg
+        from pathlib import Path
+
+        icon_copy = Path(data_folder) / "icon.ico"  # the exe's bundle lives in a temporary folder
+        if Path(icon).exists() and not icon_copy.exists():
+            shutil.copyfile(icon, icon_copy)
+        key_path = rf"Software\Classes\AppUserModelId\{app_id}"
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, display_name)
+            if icon_copy.exists():
+                winreg.SetValueEx(key, "IconUri", 0, winreg.REG_SZ, str(icon_copy))
+    except OSError:
+        LOGGER.debug("Registering the notification identity failed", exc_info=True)
 
 
 def style_title_bar(window_id: int, caption: str, text: str, border: str) -> None:
