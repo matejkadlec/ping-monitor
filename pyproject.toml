@@ -12,3 +12,12 @@ dependencies = [
     "ttkbootstrap-icons-fa>=1.0.2",
     "winshell>=0.6",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
