@@ -29,7 +29,6 @@ from src.ui.toast import ToastManager
 DEFAULT_SIZE = QSize(1200, 800)
 MINIMUM_SIZE = QSize(760, 520)
 # Window size (logical px) at which the UI is drawn at 100 %.
-BASE_WIDTH, BASE_HEIGHT = 1200, 780
 
 
 class _Root(QWidget):
@@ -200,11 +199,6 @@ class MainWindow(QMainWindow):
         self._reset_menu.addAction("Reset current tab", self._reset_current)
         self._reset_menu.addAction("Reset all tabs", self.resetAllRequested.emit)
 
-        self._scale_timer = QTimer(self)
-        self._scale_timer.setSingleShot(True)
-        self._scale_timer.setInterval(140)
-        self._scale_timer.timeout.connect(self._apply_scale)
-
         self._install_shortcuts()
         THEME.changed.connect(self._apply_theme)
         self._apply_theme()
@@ -362,15 +356,6 @@ class MainWindow(QMainWindow):
         self._top_layout.setContentsMargins(THEME.px(16), THEME.px(8), THEME.px(14), 0)
         self._top_layout.setSpacing(THEME.px(12))
         self.top_bar.setFixedHeight(THEME.px(56))
-
-    def _apply_scale(self) -> None:
-        width, height = self.width(), self.height()
-        raw = min(width / BASE_WIDTH, height / BASE_HEIGHT)
-        THEME.set_scale(round(max(0.9, min(1.3, raw)) * 10) / 10)
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._scale_timer.start()
 
     # -------------------------------------------------------------- window
     def showEvent(self, event) -> None:

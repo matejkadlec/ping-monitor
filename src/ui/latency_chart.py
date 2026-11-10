@@ -138,7 +138,7 @@ class LatencyChart(QWidget):
         super().resizeEvent(event)
 
     def _theme_changed(self) -> None:
-        self.setFixedHeight(THEME.px(160))
+        self.setFixedHeight(max(self.height(), THEME.px(160)))
         self.invalidate()
 
     # ---------------------------------------------------------------- paint

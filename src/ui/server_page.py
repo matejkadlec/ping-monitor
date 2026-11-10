@@ -203,7 +203,18 @@ class ServerPage(QWidget):
         self._paused.setStyleSheet(
             f"color: {c.ink2}; background: {c.raised}; border: 1px solid {c.hairline};"
             f" border-radius: {THEME.px(14)}px; padding: {THEME.px(4)}px {THEME.px(12)}px;")
-        self.chart.setFixedHeight(THEME.px(160))
+        self._fit_chart()
+
+    def _fit_chart(self) -> None:
+        """A taller window gives the chart some of the extra room (the stream gets
+        the rest); text keeps its size."""
+        height = max(THEME.px(160), min(THEME.px(300), round(self.height() * 0.22)))
+        if height != self.chart.height():
+            self.chart.setFixedHeight(height)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_chart()
 
     def set_paused(self, paused: bool) -> None:
         # Compare with the wanted state: isVisible() is False on hidden tabs and
