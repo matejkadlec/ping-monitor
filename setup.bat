@@ -44,7 +44,7 @@ echo Installing/Updating required packages...
 "venv\Scripts\python.exe" -m pip install --upgrade pip
 "venv\Scripts\python.exe" -m pip install --upgrade uv
 set "UV_PROJECT_ENVIRONMENT=%CD%\venv"
-"venv\Scripts\uv.exe" sync --python "venv\Scripts\python.exe" --frozen
+"venv\Scripts\uv.exe" sync --python "venv\Scripts\python.exe" --frozen --no-dev
 
 if %errorlevel% neq 0 (
     echo.
@@ -55,7 +55,7 @@ if %errorlevel% neq 0 (
 
 echo.
 echo Testing package imports...
-"venv\Scripts\python.exe" -c "import pystray, PIL, winshell, win32com.client; print('All packages imported successfully')"
+"venv\Scripts\python.exe" -c "import PySide6.QtWidgets, PySide6.QtSvg, PySide6.QtNetwork; print('All packages imported successfully')"
 
 if %errorlevel% neq 0 (
     echo.

@@ -1,0 +1,11 @@
+# Windows scripts must keep CRLF line endings (cmd.exe labels break with LF).
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.vbs text eol=crlf
+
+# Everything else: normalize to LF in the repository.
+* text=auto
+
+*.png binary
+*.ico binary
+*.ttf binary

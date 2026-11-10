@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Test / tool caches
+.pytest_cache/
+.ruff_cache/
+
 # Distribution / packaging
 dist/
 build/
