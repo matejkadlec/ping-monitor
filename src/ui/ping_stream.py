@@ -379,11 +379,12 @@ class PingStreamView(FastListView):
                 QApplication.clipboard().setText("\n".join(lines))
             event.accept()
             return
-        if event.key() == Qt.Key.Key_End:
+        plain = event.modifiers() == Qt.KeyboardModifier.NoModifier  # Shift+Home/End extend the selection
+        if plain and event.key() == Qt.Key.Key_End:
             self.scroll_to_latest()
             event.accept()
             return
-        if event.key() == Qt.Key.Key_Home:
+        if plain and event.key() == Qt.Key.Key_Home:
             self._scrollbar.glide_to(self._scrollbar.minimum(), 360)  # the oldest ping
             event.accept()
             return

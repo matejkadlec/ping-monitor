@@ -75,6 +75,15 @@ class Toast(QWidget):
         self.card = self._card_size()
         self.resize(self.card)
         self.shadow = _ToastShadow(self)
+        THEME.changed.connect(self._theme_changed)
+
+    def _theme_changed(self) -> None:
+        """The UI scale changed (e.g. maximized): new card size, shadow and slot."""
+        self.card = self._card_size()
+        self.resize(self.card)
+        self.manager._relayout()
+        self._reposition()
+        self.shadow.update()
 
     # -------------------------------------------------------------- layout
     def _font(self) -> QFont:

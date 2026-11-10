@@ -299,3 +299,17 @@ def test_a_held_enter_never_answers_a_dialog(qapp, controller):
     dialog.keyPressEvent(held)
     pump(qapp, 0.3)
     assert controller.window.overlay.top_panel() is dialog and len(panel._rows) == count
+
+
+def test_toasts_follow_a_scale_change(qapp, controller):
+    from src.ui.theme import THEME
+
+    controller.window.toasts.success("Saved.")
+    toast = controller.window.toasts._toasts[0]
+    try:
+        THEME.set_scale(1.3)
+        margin = toast.shadow_margin()
+        assert toast.size() == toast.card and toast.card.width() == THEME.px(340)
+        assert toast.shadow.geometry() == toast.geometry().adjusted(-margin, -margin, margin, margin)
+    finally:
+        THEME.set_scale(1.0)

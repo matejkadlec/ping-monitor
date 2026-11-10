@@ -314,3 +314,21 @@ def test_home_glides_to_the_oldest_ping(qapp, motion):
     pump(qapp, 0.6)
     assert view.verticalScrollBar().value() == 0 and not view.following
     stream.deleteLater()
+
+
+def test_shift_home_is_left_to_the_selection_handling(qapp, motion):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+
+    from src.ui.ping_stream import PingStream
+
+    stream = PingStream()
+    stream.resize(600, 300)
+    stream.show()
+    stream.model.reset_rows(results(50))
+    pump(qapp, 0.3)
+    view = stream.view
+    view.setCurrentIndex(stream.model.index(40, 0))
+    view.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Home, Qt.KeyboardModifier.ShiftModifier))
+    assert view.currentIndex().row() == 0  # Qt's own Shift+Home, not the plain Home glide
+    stream.deleteLater()
