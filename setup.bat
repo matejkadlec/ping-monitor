@@ -23,10 +23,18 @@ if exist "venv" (
 
 if not exist "venv" (
     echo Creating virtual environment...
-    python -m venv venv
-    if %errorlevel% neq 0 (
+    REM Prefer the py launcher, "python" may resolve to the Microsoft Store alias stub
+    py -3.14 --version >nul 2>&1
+    if not errorlevel 1 (
+        py -3.14 -m venv venv
+    ) else (
+        python -m venv venv
+    )
+    if not exist "venv\Scripts\python.exe" (
         echo.
         echo Failed to create virtual environment. Please make sure Python 3.14.2 is installed and in your PATH.
+        echo If Windows suggests the Microsoft Store, disable the python.exe and python3.exe aliases in
+        echo Settings - Apps - Advanced app settings - App execution aliases.
         pause
         exit /b 1
     )
