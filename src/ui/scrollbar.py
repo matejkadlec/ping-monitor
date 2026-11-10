@@ -105,6 +105,17 @@ class SmoothScrollBar(QScrollBar):
         self._glide.setEndValue(float(value))
         self._glide.start()
 
+    def scroll_wheel(self, event, step: float) -> None:
+        """Glide ``step`` px per wheel notch; touchpads scroll by their own pixels."""
+        pixel = event.pixelDelta().y()
+        if pixel and event.angleDelta().y() % 120 != 0:
+            self.stop_glide()
+            self.setValue(self.value() - pixel)
+        else:
+            notches = event.angleDelta().y() / 120.0
+            self.glide_to(round(self.glide_target - notches * step), 220)
+        event.accept()
+
     def stop_glide(self) -> None:
         self._glide.stop()
         self._glide_target = None

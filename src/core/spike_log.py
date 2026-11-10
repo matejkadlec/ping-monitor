@@ -66,6 +66,15 @@ class SessionMarker:
 LogItem = SpikeEntry | SessionMarker
 
 
+@dataclass(frozen=True, slots=True)
+class RecentItems:
+    """The newest entries of previous sessions (oldest first, with their markers)."""
+
+    items: list[LogItem]
+    truncated: bool  # older entries exist in the file but are not included
+    partial_first: bool  # the oldest included session misses some of its entries
+
+
 def entry_from_result(result: PingResult) -> SpikeEntry:
     stamp = result.timestamp.replace(microsecond=0)
     if result.status is PingStatus.OK:
@@ -185,15 +194,59 @@ class SpikeLog:
             self._archive_and_clean_locked(include_leftover=False)
 
     # ------------------------------------------------------------------ reads
-    def current_entries(self) -> list[SpikeEntry]:
+    def current_entries(self, limit: int | None = None) -> list[SpikeEntry]:
+        """Entries of this session, oldest first (only the newest ``limit``)."""
         with self._lock:
+            if limit is not None and len(self._session_entries) > limit:
+                return self._session_entries[-limit:] if limit > 0 else []
             return list(self._session_entries)
+
+    def session_entry_count(self) -> int:
+        with self._lock:
+            return len(self._session_entries)
 
     def previous_items(self) -> list[LogItem]:
         """Parsed previous sessions, oldest first (markers + entries)."""
         with self._lock:
             text = self._read(self.previous_path)
         return [item for item in map(parse_line, text.splitlines()) if item is not None]
+
+    def recent_previous_items(self, limit: int) -> RecentItems:
+        """The newest ``limit`` entries of previous sessions. Only those lines are
+        parsed, so it stays fast with a day of entries in the file.
+
+        Raises OSError when the file exists but cannot be read.
+        """
+        with self._lock:
+            if not self.previous_path.exists():
+                return RecentItems([], False, False)
+            raw = self.previous_path.read_bytes()
+        lines = decode_text(raw).splitlines()
+        items: list[LogItem] = []
+        entries = 0
+        truncated = partial_first = False
+        for index in range(len(lines) - 1, -1, -1):
+            item = parse_line(lines[index])
+            if item is None:
+                continue
+            if isinstance(item, SpikeEntry):
+                if entries >= limit:
+                    truncated = True
+                    if items and isinstance(items[-1], SpikeEntry):
+                        # The oldest included session continues further up:
+                        # add its header and mark it as incomplete.
+                        partial_first = True
+                        for earlier in range(index - 1, -1, -1):
+                            if lines[earlier].lstrip().startswith("==="):
+                                marker = parse_line(lines[earlier])
+                                if marker is not None:
+                                    items.append(marker)
+                                    break
+                    break
+                entries += 1
+            items.append(item)
+        items.reverse()
+        return RecentItems(items, truncated, partial_first)
 
     # --------------------------------------------------------------- internal
     def _read(self, path: Path) -> str:

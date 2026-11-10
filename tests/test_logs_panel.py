@@ -12,8 +12,8 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from src.core.models import PingResult, PingStatus  # noqa: E402
-from src.core.spike_log import SessionMarker, SpikeEntry  # noqa: E402
-from src.ui.logs_panel import ITEM_ROLE, LogModel, LogsPanel  # noqa: E402
+from src.core.spike_log import SessionMarker, SpikeEntry, SpikeLog  # noqa: E402
+from src.ui.logs_panel import ITEM_ROLE, EarlierEntries, LogModel, LogsPanel, MoreInFile, _LogList  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -42,12 +42,80 @@ def test_model_shows_sessions_newest_first(qapp):
         new_session,
         SpikeEntry(t + timedelta(hours=2, minutes=1), "b.com", "spike", 90),
     ]
-    model = LogModel()
+    model = LogModel(headers=True)
     model.set_items(items)
     rows = [model.data(model.index(row), ITEM_ROLE) for row in range(model.rowCount())]
     assert rows[0] == new_session and rows[1].server == "b.com"
     assert rows[2] == old_session and rows[3].kind == "timeout" and rows[4].rtt_ms == 70
-    assert model.session_count(old_session) == 2 and model.session_count(new_session) == 1
+    assert model.session_count(old_session) == (2, False) and model.session_count(new_session) == (1, False)
+
+
+def test_model_keeps_file_order_and_labels_legacy_entries(qapp):
+    t = datetime(2026, 10, 25, 2, 30, 0)  # DST fall-back: 02:xx happens twice
+    legacy = [SpikeEntry(t, "old.com", "spike", 80), SpikeEntry(t, "old.com", "timeout")]
+    marker = SessionMarker(t)
+    later_hour = [SpikeEntry(t + timedelta(minutes=50), "a.com", "spike", 70),
+                  SpikeEntry(t - timedelta(minutes=10), "a.com", "spike", 75)]  # clock went back
+    model = LogModel(headers=True)
+    model.set_items([*legacy, marker, *later_hour])
+    rows = [model.data(model.index(row), ITEM_ROLE) for row in range(model.rowCount())]
+    assert rows[0] == marker and rows[1].rtt_ms == 75 and rows[2].rtt_ms == 70  # newest = last written
+    assert isinstance(rows[3], EarlierEntries) and model.session_count(rows[3]) == (2, False)
+    assert rows[4].kind == "timeout" and rows[5].kind == "spike"
+
+
+def test_model_keeps_only_the_newest_entries(qapp):
+    model = LogModel(headers=False, limit=3, overflow_text="older entries are in the file")
+    start = datetime(2026, 11, 10, 12, 0, 0)
+    model.set_items([SpikeEntry(start, "a.com", "spike", 61)])
+    for offset in range(1, 6):
+        model.prepend(SpikeEntry(start + timedelta(seconds=offset), "a.com", "spike", 61 + offset))
+    rows = [model.data(model.index(row), ITEM_ROLE) for row in range(model.rowCount())]
+    assert model.entry_count() == 3
+    assert [row.rtt_ms for row in rows[:3]] == [66, 65, 64]
+    assert isinstance(rows[3], MoreInFile) and len(rows) == 4
+
+
+def entries(count: int) -> list[SpikeEntry]:
+    start = datetime.now() - timedelta(seconds=count)
+    return [SpikeEntry(start + timedelta(seconds=i), "a.com", "spike", 60 + i % 40) for i in range(count)]
+
+
+def test_new_entries_keep_the_reading_position(qapp):
+    from src.ui.theme import THEME
+
+    THEME.set_motion(True)
+    view = _LogList(False, "empty", headers=False)
+    view.resize(500, 300)
+    view.show()
+    view.model_.set_items(entries(200))
+    pump(qapp, 0.2)
+    bar = view.verticalScrollBar()
+    bar.setValue(400)
+    pump(qapp, 0.1)
+    top = view.indexAt(view.viewport().rect().topLeft()).data(ITEM_ROLE)
+    for entry in entries(5):
+        view.model_.prepend(entry)
+    pump(qapp, 0.1)
+    assert view.indexAt(view.viewport().rect().topLeft()).data(ITEM_ROLE) is top
+    view.deleteLater()
+
+
+def test_fresh_timer_stops_even_when_rows_are_not_painted(qapp):
+    from src.ui.theme import THEME
+
+    THEME.set_motion(True)
+    view = _LogList(False, "empty", headers=False)
+    view.resize(500, 300)
+    view.show()
+    view.model_.set_items(entries(200))
+    view.verticalScrollBar().setValue(2000)  # the new rows at the top are off screen
+    for entry in entries(3):
+        view.model_.prepend(entry)
+    assert view._fresh_timer.isActive()
+    pump(qapp, 1.6)
+    assert not view._fresh_timer.isActive()
+    view.deleteLater()
 
 
 def test_logs_panel_updates_live(qapp, tmp_path, monkeypatch):
@@ -77,5 +145,36 @@ def test_logs_panel_updates_live(qapp, tmp_path, monkeypatch):
         panel.request_close()
         pump(qapp, 0.4)
         assert not ctrl.window.overlay.is_open()
+        ctrl.open_logs()  # the last tab is remembered while the app runs
+        pump(qapp, 0.3)
+        panel = ctrl.window.overlay.top_panel()
+        assert panel.tabs.current() == 1 and panel.previous_list.isVisible()
+        assert not panel.current_list.isVisible()
     finally:
+        LogsPanel._last_tab = 0
         ctrl.quit()
+
+
+def test_previous_sessions_retry_after_a_read_error(qapp, tmp_path, monkeypatch):
+    log = SpikeLog(tmp_path)
+    log.start_session()
+    calls = []
+
+    def flaky(limit):
+        calls.append(limit)
+        if len(calls) == 1:
+            raise PermissionError(13, "The file is in use")
+        return SpikeLog.recent_previous_items(log, limit)
+
+    monkeypatch.setattr(log, "recent_previous_items", flaky)
+    panel = LogsPanel(log, 60, tmp_path)
+    try:
+        panel.tabs.set_current(1)
+        assert "Could not read" in panel.previous_list.empty_text
+        panel.tabs.set_current(0)
+        panel.tabs.set_current(1)
+        assert len(calls) == 2 and panel._previous_loaded
+    finally:
+        LogsPanel._last_tab = 0
+        log.close()
+        panel.deleteLater()

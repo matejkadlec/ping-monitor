@@ -368,17 +368,10 @@ class PingStreamView(QListView):
     # ---------------------------------------------------------------- input
     def wheelEvent(self, event) -> None:  # also used for the wheel over the scrollbar
         bar = self._scrollbar
-        pixel = event.pixelDelta().y()
-        if pixel and not event.angleDelta().y() % 120 == 0:
-            bar.stop_glide()
-            bar.setValue(bar.value() - pixel)
-        else:
-            notches = event.angleDelta().y() / 120.0
-            rows = max(3, min(25, round(self._model.rowCount() * 0.01)))
-            target = bar.glide_target - notches * rows * self._delegate.row_height()
-            bar.glide_to(round(target), 220)
+        # Faster with more rows (1 % of them per notch), within 3..25 rows.
+        rows = max(3, min(25, round(self._model.rowCount() * 0.01)))
+        bar.scroll_wheel(event, rows * self._delegate.row_height())
         self._set_following(bar.glide_target >= bar.maximum() - self._delegate.row_height() // 2)
-        event.accept()
 
     def keyPressEvent(self, event) -> None:
         if event.matches(QKeySequence.StandardKey.Copy):

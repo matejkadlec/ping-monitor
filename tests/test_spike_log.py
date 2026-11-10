@@ -139,3 +139,28 @@ def test_unreadable_leftover_is_kept(tmp_path, monkeypatch):
     third.start_session()
     assert [i.rtt_ms for i in third.previous_items() if isinstance(i, SpikeEntry)] == [80]
     third.close()
+
+
+def test_recent_previous_items_reads_only_the_newest_entries(tmp_path):
+    lines = ["[2026-11-10 08:00:00] legacy.com: 70ms"]  # written before session markers existed
+    for session, start in enumerate((9, 10, 11)):
+        lines.append(f"=== Session 2026-11-10 {start:02d}:00:00 ===")
+        lines += [f"[2026-11-10 {start:02d}:{minute:02d}:00] s{session}.com: {60 + minute}ms" for minute in range(1, 5)]
+    (tmp_path / "ping_spikes.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    log = SpikeLog(tmp_path, clock=lambda: NOW)
+
+    everything = log.recent_previous_items(100)
+    assert not everything.truncated and not everything.partial_first
+    assert everything.items == [item for item in log.previous_items()]
+
+    newest = log.recent_previous_items(6)  # all of session 2 and half of session 1
+    assert newest.truncated and newest.partial_first
+    assert newest.items[0] == SessionMarker(datetime(2026, 11, 10, 10, 0, 0))
+    assert [item.server for item in newest.items if isinstance(item, SpikeEntry)] == ["s1.com"] * 2 + ["s2.com"] * 4
+
+    whole_sessions = log.recent_previous_items(8)  # exactly sessions 1 and 2
+    assert whole_sessions.truncated and not whole_sessions.partial_first
+    assert whole_sessions.items[0] == SessionMarker(datetime(2026, 11, 10, 10, 0, 0))
+
+    assert log.current_entries(limit=0) == []
+    assert SpikeLog(tmp_path / "missing").recent_previous_items(10).items == []
