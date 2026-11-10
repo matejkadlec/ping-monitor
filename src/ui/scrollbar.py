@@ -1,11 +1,15 @@
 """
 Slim, custom-painted vertical scrollbar.
 
-* Arrows at both ends are always visible; clicking one glides all the way to
-  the top / bottom, with a pointer cursor while hovering them.
+* As soon as there is something to scroll, the whole bar fades in with both
+  arrows visible; clicking an arrow glides all the way to the top / bottom,
+  with a pointer cursor while hovering it. Its space is always reserved, so
+  the rows never jump sideways when it appears.
 * The handle widens softly on hover and is drawn the same from the very first
   frame (no native Windows overlay-scrollbar quirks).
 * Programmatic scrolling can glide (``glide_to``) instead of jumping.
+* The mouse wheel over the bar scrolls like the wheel over the list
+  (``wheel_handler``).
 """
 
 from PySide6.QtCore import QEasingCurve, QPointF, QRectF, QSize, Qt, QVariantAnimation, Signal
@@ -13,7 +17,7 @@ from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QScrollBar, QWidget
 
 from src.ui import icons
-from src.ui.controls import Tween
+from src.ui.controls import Tween, connect_running
 from src.ui.theme import THEME, mix
 
 
@@ -23,16 +27,28 @@ class SmoothScrollBar(QScrollBar):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(Qt.Orientation.Vertical, parent)
         self._hover = Tween(self, self.update)
+        self._presence = Tween(self, self.update, duration=THEME.NORMAL)
         self._zone: str | None = None
         self._drag_offset: float | None = None
         self._glide_target: int | None = None
         self._glide = QVariantAnimation(self)
         self._glide.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._glide.valueChanged.connect(lambda v: self.setValue(round(float(v))))
+        connect_running(self._glide, lambda v: self.setValue(round(float(v))))
         self._glide.finished.connect(self._glide_finished)
+        self.wheel_handler = None  # set by the view: same wheel speed over the bar
+        self.rangeChanged.connect(self._range_changed)
         self.setMouseTracking(True)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
         THEME.changed.connect(self.updateGeometry)
+
+    def has_range(self) -> bool:
+        return self.maximum() > self.minimum()
+
+    def _range_changed(self, minimum: int, maximum: int) -> None:
+        self._presence.to(1.0 if maximum > minimum else 0.0)
+        if maximum <= minimum and self._zone is not None:
+            self._zone = None
+            self.unsetCursor()
 
     # -------------------------------------------------------------- geometry
     def sizeHint(self) -> QSize:
@@ -56,6 +72,8 @@ class SmoothScrollBar(QScrollBar):
         return up, down, track, QRectF(0, position, width, length)
 
     def _zone_at(self, point: QPointF) -> str | None:
+        if not self.has_range():
+            return None  # nothing to scroll: the bar is invisible and inert
         up, down, track, handle = self._rects()
         if up.contains(point):
             return "up"
@@ -74,15 +92,16 @@ class SmoothScrollBar(QScrollBar):
 
     def glide_to(self, value: int, duration: int | None = None) -> None:
         value = max(self.minimum(), min(self.maximum(), int(value)))
+        start = self.value()
         self._glide.stop()
         ms = THEME.duration(duration if duration is not None else 240)
-        if ms <= 0 or value == self.value():
+        if ms <= 0 or value == start:
             self._glide_target = None
             self.setValue(value)
             return
         self._glide_target = value
         self._glide.setDuration(ms)
-        self._glide.setStartValue(float(self.value()))
+        self._glide.setStartValue(float(start))
         self._glide.setEndValue(float(value))
         self._glide.start()
 
@@ -143,6 +162,12 @@ class SmoothScrollBar(QScrollBar):
             self.setSliderDown(False)
         event.accept()
 
+    def wheelEvent(self, event) -> None:
+        if self.wheel_handler is not None:
+            self.wheel_handler(event)
+        else:
+            super().wheelEvent(event)
+
     def enterEvent(self, event) -> None:
         self._hover.to(1.0)
         super().enterEvent(event)
@@ -156,9 +181,13 @@ class SmoothScrollBar(QScrollBar):
 
     # ----------------------------------------------------------------- paint
     def paintEvent(self, _event) -> None:
+        presence = self._presence.value
+        if presence <= 0.001:
+            return
         c = THEME.colors
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setOpacity(presence)
         up, down, track, handle = self._rects()
         hover = self._hover.value
         dragging = self._drag_offset is not None

@@ -9,22 +9,25 @@ draw the sonar ring that ripples out of the newest point.
 import bisect
 import math
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QVariantAnimation, QEasingCurve
+from PySide6.QtCore import QEasingCurve, QPointF, QRectF, QSize, Qt, QVariantAnimation
 from PySide6.QtGui import (
     QColor,
     QFont,
     QFontMetrics,
     QLinearGradient,
     QPainter,
-    QPainterPath,
     QPen,
     QPixmap,
+    QPolygonF,
 )
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from src.core.models import LatencyLevel, PingResult, PingStatus, classify_latency
 from src.core.stats import ServerHistory
+from src.ui.controls import connect_running
 from src.ui.theme import THEME
+
+RING_MS = 900  # shorter than the usual 1 s interval, so the chart rests between pings
 
 _NICE_STEPS = (5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000)
 
@@ -74,7 +77,7 @@ class LatencyChart(QWidget):
         self._ring.setStartValue(0.0)
         self._ring.setEndValue(1.0)
         self._ring.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._ring.valueChanged.connect(lambda _v: self.update())
+        connect_running(self._ring, lambda _v: self._update_head())
         self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumHeight(THEME.px(120))
@@ -95,8 +98,17 @@ class LatencyChart(QWidget):
                 and self._history and self._history.last_result \
                 and self._history.last_result.status is PingStatus.OK:
             self._ring.stop()
-            self._ring.setDuration(1100)
+            self._ring.setDuration(RING_MS)
             self._ring.start()
+
+    def _update_head(self) -> None:
+        """Animation frames only repaint the area around the newest point."""
+        if self._head is None:
+            self.update()
+            return
+        reach = THEME.px(5) + THEME.px(20) + 3
+        point = self._head[0]
+        self.update(QRectF(point.x() - reach, point.y() - reach, 2 * reach, 2 * reach).toAlignedRect())
 
     def sizeHint(self) -> QSize:
         return QSize(THEME.px(800), THEME.px(160))
@@ -189,11 +201,17 @@ class LatencyChart(QWidget):
         reference = rtts[int(0.98 * (len(rtts) - 1))] if rtts else 0
         top, step = nice_ceiling(max(degraded * 1.4, reference * 1.15, 10))
 
+        # Plain floats: this runs once per ping over up to an hour of results.
+        plot_left, plot_top = plot.left(), plot.top()
+        plot_width, plot_height, plot_bottom = plot.width(), plot.height(), plot.bottom()
+        x_scale = plot_width / span
+        y_scale = plot_height / top
+
         def x_of(epoch: float) -> float:
-            return plot.left() + plot.width() * ((epoch - start) / span)
+            return plot_left + (epoch - start) * x_scale
 
         def y_of(value: float) -> float:
-            return plot.bottom() - plot.height() * min(value, top) / top
+            return plot_bottom - min(value, top) * y_scale
 
         # Gridlines + axis labels (solid hairlines).
         painter.setFont(axis_font)
@@ -222,45 +240,56 @@ class LatencyChart(QWidget):
             painter.drawText(QRectF(plot.right() + THEME.px(8), y - THEME.px(8), THEME.px(70), THEME.px(16)),
                              Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, f"{value} ms")
 
-        # Losses and gaps as vertical bands.
-        slot = max(1.5, plot.width() / max(1, len(results)))
-        for result in results:
-            if result.status is PingStatus.GAP:
-                x0 = x_of(result.epoch)
-                x1 = x_of(result.epoch + result.gap_seconds)
-                band = QColor(c.neutral)
-                band.setAlphaF(0.16)
-                painter.fillRect(QRectF(x0, plot.top(), max(1.5, x1 - x0), plot.height()), band)
-            elif result.status.is_lost:
-                band = QColor(c.bad)
-                band.setAlphaF(0.30)
-                x = x_of(result.epoch)
-                painter.fillRect(QRectF(x - slot / 2, plot.top(), max(2.0, slot), plot.height()), band)
-
-        # Decimate to one point per pixel column (keeping the worst value).
+        # One pass: loss/gap bands, line segments decimated to one point per
+        # pixel column (keeping the worst value) and the hover targets.
+        gap_color = QColor(c.neutral)
+        gap_color.setAlphaF(0.16)
+        loss_color = QColor(c.bad)
+        loss_color.setAlphaF(0.30)
+        slot = max(1.5, plot_width / max(1, len(results)))
+        loss_band: list[float] | None = None  # [x0, x1] of consecutive losses
+        segments: list[list[tuple[float, float]]] = []
+        segment: list[tuple[float, float]] | None = None
         columns: dict[int, tuple[float, PingResult]] = {}
-        segments: list[list[QPointF]] = [[]]
         last_column = None
+        ok, gap = PingStatus.OK, PingStatus.GAP
         for result in results:
-            if result.status is not PingStatus.OK or result.rtt_ms is None:
-                if segments[-1]:
-                    segments.append([])
-                last_column = None
+            status, rtt = result.status, result.rtt_ms
+            x = plot_left + (result.epoch - start) * x_scale
+            if status is not ok or rtt is None:
+                segment = None
+                if status is gap:
+                    painter.fillRect(QRectF(x, plot_top, max(1.5, result.gap_seconds * x_scale), plot_height),
+                                     gap_color)
+                elif status.is_lost:
+                    x0, x1 = x - slot / 2, x - slot / 2 + max(2.0, slot)
+                    if loss_band is not None and x0 <= loss_band[1] + 1.0:
+                        loss_band[1] = x1
+                    else:
+                        if loss_band is not None:
+                            painter.fillRect(QRectF(loss_band[0], plot_top, loss_band[1] - loss_band[0],
+                                                    plot_height), loss_color)
+                        loss_band = [x0, x1]
                 continue
-            x = x_of(result.epoch)
+            y = plot_bottom - (rtt if rtt < top else top) * y_scale
             column = int(x)
-            if column == last_column and segments[-1]:
-                previous = segments[-1][-1]
-                if y_of(result.rtt_ms) < previous.y():
-                    segments[-1][-1] = QPointF(previous.x(), y_of(result.rtt_ms))
+            if segment is None:
+                segment = [(x, y)]
+                segments.append(segment)
+            elif column == last_column:
+                if y < segment[-1][1]:
+                    segment[-1] = (segment[-1][0], y)
             else:
-                segments[-1].append(QPointF(x, y_of(result.rtt_ms)))
+                segment.append((x, y))
             last_column = column
-            if column not in columns or y_of(result.rtt_ms) < columns[column][0]:
-                columns[column] = (y_of(result.rtt_ms), result)
+            best = columns.get(column)
+            if best is None or y < best[0]:
+                columns[column] = (y, result)
+        if loss_band is not None:
+            painter.fillRect(QRectF(loss_band[0], plot_top, loss_band[1] - loss_band[0], plot_height), loss_color)
 
         accent = QColor(c.accent)
-        gradient = QLinearGradient(0, plot.top(), 0, plot.bottom())
+        gradient = QLinearGradient(0, plot_top, 0, plot_bottom)
         top_color = QColor(accent)
         top_color.setAlphaF(0.22)
         bottom_color = QColor(accent)
@@ -272,21 +301,19 @@ class LatencyChart(QWidget):
         line_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         line_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         for points in segments:
-            if not points:
-                continue
             if len(points) == 1:
-                points = [points[0], QPointF(points[0].x() + 1.5, points[0].y())]
-            line = QPainterPath(points[0])
-            for point in points[1:]:
-                line.lineTo(point)
-            area = QPainterPath(line)
-            area.lineTo(points[-1].x(), plot.bottom())
-            area.lineTo(points[0].x(), plot.bottom())
-            area.closeSubpath()
-            painter.fillPath(area, gradient)
+                x, y = points[0]
+                points = [(x, y), (x + 1.5, y)]
+            line = QPolygonF([QPointF(x, y) for x, y in points])
+            area = QPolygonF(line)
+            area.append(QPointF(points[-1][0], plot_bottom))
+            area.append(QPointF(points[0][0], plot_bottom))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(gradient)
+            painter.drawPolygon(area)
             painter.setPen(line_pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawPath(line)
+            painter.drawPolyline(line)
 
         # One hover target per pixel column (the worst ping in it).
         for column in sorted(columns):
@@ -296,12 +323,12 @@ class LatencyChart(QWidget):
 
         # Spikes: red dots with a ring in the surface color.
         dot = THEME.px(3.5)
+        spike_pen = QPen(QColor(c.deep), 2)
         for y, result in columns.values():
             if result.rtt_ms is not None and result.rtt_ms > degraded:
-                x = x_of(result.epoch)
-                painter.setPen(QPen(QColor(c.deep), 2))
+                painter.setPen(spike_pen)
                 painter.setBrush(QColor(c.bad))
-                painter.drawEllipse(QPointF(x, y), dot, dot)
+                painter.drawEllipse(QPointF(x_of(result.epoch), y), dot, dot)
 
         last = results[-1]
         if last.status is PingStatus.OK and last.rtt_ms is not None:

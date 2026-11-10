@@ -243,7 +243,11 @@ class AppController(QObject):
         self.engine.set_servers(settings.servers)
         if [(s.name, s.host) for s in previous.servers] != [(s.name, s.host) for s in settings.servers]:
             self.window.set_servers(self._page_specs())
-        self.window.reload_all()
+        display = ("ping_threshold_healthy", "ping_threshold_degraded", "preserved_minutes")
+        if any(getattr(previous, field) != getattr(settings, field) for field in display):
+            # Recolor / trim the existing data (pages of untouched servers keep
+            # their scroll position and selection when only other settings change).
+            self.window.reload_all()
         for name, history in self.histories.items():
             self.window.update_tab(name, history.health(), self._last_values.get(name, ""))
         self.tray.set_close_to_tray(settings.close_to_tray)

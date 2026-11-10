@@ -3,7 +3,7 @@ Main window: server tabs (top left), actions (top right), one page per server.
 """
 
 from PySide6.QtCore import QByteArray, QPoint, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
@@ -25,6 +25,7 @@ from src.ui.theme import THEME
 from src.ui.toast import ToastManager
 
 DEFAULT_SIZE = QSize(1200, 800)
+MINIMUM_SIZE = QSize(760, 520)
 # Window size (logical px) at which the UI is drawn at 100 %.
 BASE_WIDTH, BASE_HEIGHT = 1200, 780
 
@@ -115,8 +116,8 @@ class MainWindow(QMainWindow):
         icon_path = asset_path("icon.ico")
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
-        self.resize(DEFAULT_SIZE)
-        self.setMinimumSize(760, 520)
+        self.setMinimumSize(MINIMUM_SIZE)
+        self._place_default()
 
         self._pages: dict[str, ServerPage] = {}
         self._order: list[str] = []
@@ -177,6 +178,21 @@ class MainWindow(QMainWindow):
         self._install_shortcuts()
         THEME.changed.connect(self._apply_theme)
         self._apply_theme()
+
+    def _place_default(self) -> None:
+        """Default size, but never larger than the screen (1366x768, 125 % / 150 %
+        scaling) and centered on it. A saved window state overrides this."""
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            self.resize(DEFAULT_SIZE)
+            return
+        area = screen.availableGeometry()
+        frame = 40  # title bar and borders are outside the client size
+        width = max(MINIMUM_SIZE.width(), min(DEFAULT_SIZE.width(), area.width() - 2 * frame))
+        height = max(MINIMUM_SIZE.height(), min(DEFAULT_SIZE.height(), area.height() - 2 * frame))
+        self.resize(width, height)
+        self.move(area.x() + (area.width() - width) // 2,
+                  area.y() + max(0, (area.height() - height - frame) // 2))
 
     # ------------------------------------------------------------ servers
     def set_servers(self, servers: list[tuple[str, str, ServerHistory]]) -> None:
@@ -338,8 +354,9 @@ class MainWindow(QMainWindow):
 
     def bring_to_front(self) -> None:
         if self.isMinimized():
-            self.showNormal()
-        else:
-            self.show()
+            # Un-minimize but keep maximized / full screen (showNormal() would not).
+            self.setWindowState((self.windowState() & ~Qt.WindowState.WindowMinimized)
+                                | Qt.WindowState.WindowActive)
+        self.show()
         self.raise_()
         self.activateWindow()

@@ -9,6 +9,7 @@ start just asks the running instance to show its window and exits.
 import getpass
 import logging
 import re
+import sys
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -17,6 +18,24 @@ from src.core.paths import APP_ID
 
 LOGGER = logging.getLogger(__name__)
 MESSAGE_SHOW = b"show"
+
+
+def allow_foreground_switch() -> None:
+    """Windows only lets the process the user just started bring a window to the
+    front; pass that right on, so the running instance can raise its window
+    instead of only flashing its taskbar button."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        allow = user32.AllowSetForegroundWindow
+        allow.argtypes = [ctypes.c_uint32]
+        allow.restype = ctypes.c_int
+        allow(0xFFFFFFFF)  # ASFW_ANY
+    except (OSError, AttributeError):
+        LOGGER.debug("AllowSetForegroundWindow failed", exc_info=True)
 
 
 def server_name() -> str:
@@ -41,6 +60,7 @@ class SingleInstance(QObject):
         socket.connectToServer(self._name)
         if not socket.waitForConnected(timeout_ms):
             return False
+        allow_foreground_switch()
         socket.write(MESSAGE_SHOW)
         socket.flush()
         socket.waitForBytesWritten(timeout_ms)

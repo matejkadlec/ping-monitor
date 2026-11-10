@@ -20,6 +20,19 @@ from src.ui import icons
 from src.ui.theme import THEME, mix
 
 
+def connect_running(animation: QVariantAnimation, slot: Callable[[float], None]) -> None:
+    """Connect ``slot`` to ``animation.valueChanged``, ignoring the values Qt emits
+    while a stopped animation is being reconfigured (setDuration / setStartValue /
+    setEndValue re-interpolate the old curve and would make the next run start
+    from a stale value)."""
+
+    def forward(value) -> None:
+        if animation.state() == QVariantAnimation.State.Running:
+            slot(value)
+
+    animation.valueChanged.connect(forward)
+
+
 class Tween(QObject):
     """Animated float in [0, 1] (or any range) that calls ``on_update`` per frame."""
 
@@ -33,7 +46,7 @@ class Tween(QObject):
         self._duration = duration
         self._animation = QVariantAnimation(self)
         self._animation.setEasingCurve(easing)
-        self._animation.valueChanged.connect(self._step)
+        connect_running(self._animation, self._step)
 
     def _step(self, value: float) -> None:
         self.value = float(value)
@@ -44,6 +57,7 @@ class Tween(QObject):
                                        or self.value == target):
             return
         self._target = target
+        start = float(self.value)
         self._animation.stop()
         ms = THEME.duration(duration if duration is not None else (self._duration or THEME.FAST))
         if ms <= 0:
@@ -51,7 +65,7 @@ class Tween(QObject):
             self._on_update()
             return
         self._animation.setDuration(ms)
-        self._animation.setStartValue(float(self.value))
+        self._animation.setStartValue(start)
         self._animation.setEndValue(float(target))
         self._animation.start()
 
@@ -97,17 +111,18 @@ def fade(widget: QWidget, visible: bool, duration: int | None = None,
     if animation is None:
         animation = QVariantAnimation(widget)
         animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        animation.valueChanged.connect(lambda value, w=widget: _apply_fade(w, value))
+        connect_running(animation, lambda value, w=widget: _apply_fade(w, value))
         animation.finished.connect(lambda w=widget: _fade_finished(w))
         widget._fade_animation = animation  # type: ignore[attr-defined]
     widget._fade_visible = visible  # type: ignore[attr-defined]
     widget._fade_callback = on_finished  # type: ignore[attr-defined]
+    start = effect.opacity()
     animation.stop()
     if visible:
         widget.show()
     ms = THEME.duration(duration if duration is not None else THEME.NORMAL)
     animation.setDuration(max(1, ms))
-    animation.setStartValue(effect.opacity())
+    animation.setStartValue(start)
     animation.setEndValue(1.0 if visible else 0.0)
     animation.start()
 
@@ -372,6 +387,8 @@ class CheckBox(QAbstractButton):
         THEME.changed.connect(self.updateGeometry)
 
     def setChecked(self, checked: bool) -> None:  # noqa: N802 - Qt naming
+        if checked == self.isChecked():
+            return  # keep a running toggle animation going
         super().setChecked(checked)
         self._checked.jump(1.0 if checked else 0.0)
 

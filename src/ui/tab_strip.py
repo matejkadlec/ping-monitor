@@ -10,7 +10,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from src.core.models import HealthStatus
-from src.ui.controls import Tween
+from src.ui.controls import Tween, connect_running
 from src.ui.theme import THEME, mix
 
 
@@ -42,7 +42,7 @@ class TabStrip(QWidget):
         self._indicator_anim.setStartValue(0.0)
         self._indicator_anim.setEndValue(1.0)
         self._indicator_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._indicator_anim.valueChanged.connect(self._step_indicator)
+        connect_running(self._indicator_anim, self._step_indicator)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)

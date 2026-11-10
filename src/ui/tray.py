@@ -2,7 +2,7 @@
 System tray icon: colored status dot (first server), compact styled menu.
 """
 
-from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QObject, QRectF, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSystemTrayIcon, QWidget, QWidgetAction
 
@@ -22,7 +22,8 @@ WINDOWS_TOOLTIP_LIMIT = 127
 
 
 def status_icon(status: HealthStatus) -> QIcon:
-    """Anti-aliased dot with a hairline border in a darker shade of the same color."""
+    """Anti-aliased dot in exactly the status color, with a hairline border in a
+    darker shade of the same color."""
     fill = QColor(TRAY_COLORS[status])
     border = QColor(fill).darker(165)
     icon = QIcon()
@@ -39,12 +40,6 @@ def status_icon(status: HealthStatus) -> QIcon:
         painter.setPen(pen)
         painter.setBrush(fill)
         painter.drawEllipse(QRectF(margin, margin, diameter, diameter))
-        # A tiny highlight keeps the dot from looking flat on dark taskbars.
-        highlight = QColor(255, 255, 255, 46)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(highlight)
-        painter.drawEllipse(QPointF(size / 2 - diameter * 0.16, size / 2 - diameter * 0.18),
-                            diameter * 0.18, diameter * 0.14)
         painter.end()
         icon.addPixmap(pixmap)
     return icon

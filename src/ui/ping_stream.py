@@ -7,7 +7,7 @@ row only while you are at the bottom, and a "Latest" pill brings you back.
 """
 
 import time
-from collections import deque
+from collections import OrderedDict, deque
 
 from PySide6.QtCore import (
     QAbstractListModel,
@@ -40,6 +40,7 @@ from src.ui.theme import THEME, mix
 
 RESULT_ROLE = Qt.ItemDataRole.UserRole + 1
 FRESH_MS = 900.0
+FRESH_FRAME_MS = 33  # the highlight is subtle: 30 fps is plenty
 
 
 def format_line(result: PingResult) -> str:
@@ -69,10 +70,14 @@ def describe(result: PingResult) -> str:
 
 
 class PingStreamModel(QAbstractListModel):
+    # Emitted before the oldest ``count`` rows are dropped (Preserved Minutes).
+    rowsAboutToBeEvicted = Signal(int)
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._rows: deque[PingResult] = deque()
-        self._fresh: dict[int, float] = {}
+        # id(result) -> time it was added, oldest first (rows are only appended).
+        self._fresh: OrderedDict[int, float] = OrderedDict()
         self.thresholds = (40, 60)
 
     # Qt API
@@ -103,6 +108,7 @@ class PingStreamModel(QAbstractListModel):
         count = min(count, len(self._rows))
         if count <= 0:
             return
+        self.rowsAboutToBeEvicted.emit(count)
         self.beginRemoveRows(QModelIndex(), 0, count - 1)
         for _ in range(count):
             self._fresh.pop(id(self._rows.popleft()), None)
@@ -129,8 +135,20 @@ class PingStreamModel(QAbstractListModel):
             return 0.0
         return 1.0 - age / FRESH_MS
 
+    def prune_fresh(self) -> int:
+        """Forget expired highlights (also of rows that were never painted, e.g.
+        added while hidden); returns how many of the newest rows are still fresh."""
+        fresh = self._fresh
+        now = time.monotonic()
+        while fresh:
+            oldest = next(iter(fresh))
+            if (now - fresh[oldest]) * 1000 < FRESH_MS:
+                break
+            del fresh[oldest]
+        return len(fresh)
+
     def has_fresh_rows(self) -> bool:
-        return bool(self._fresh)
+        return self.prune_fresh() > 0
 
 
 class PingStreamDelegate(QStyledItemDelegate):
@@ -231,14 +249,18 @@ class PingStreamView(QListView):
         self._model = model
         self._delegate = PingStreamDelegate(model, self)
         self._scrollbar = SmoothScrollBar(self)
+        self._scrollbar.wheel_handler = self.wheelEvent
         self._following = True
+        self._follow_on_show = True
+        self._fresh_rows_painted = 0
         self.setModel(model)
         self.setItemDelegate(self._delegate)
         self.setVerticalScrollBar(self._scrollbar)
         self.setUniformItemSizes(True)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # Always reserve the bar's space (it fades in when needed) so rows never shift.
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setMouseTracking(True)
@@ -247,14 +269,15 @@ class PingStreamView(QListView):
         self.viewport().setAutoFillBackground(False)
 
         self._fresh_timer = QTimer(self)
-        self._fresh_timer.setInterval(16)
+        self._fresh_timer.setInterval(FRESH_FRAME_MS)
         self._fresh_timer.timeout.connect(self._tick_fresh)
 
+        model.rowsAboutToBeEvicted.connect(self._before_evict)
         model.rowsAboutToBeInserted.connect(self._before_insert)
         model.rowsInserted.connect(self._after_insert)
         model.rowsAboutToBeRemoved.connect(self._before_remove)
         model.rowsRemoved.connect(self._after_remove)
-        model.modelReset.connect(lambda: QTimer.singleShot(0, self.scroll_to_latest_instantly))
+        model.modelReset.connect(lambda: QTimer.singleShot(0, self, self.scroll_to_latest_instantly))
         self._scrollbar.valueChanged.connect(self._on_scrolled)
         self._scrollbar.glideFinished.connect(lambda: self._set_following(self._at_bottom()))
         self._scrollbar.rangeChanged.connect(self._on_range_changed)
@@ -298,10 +321,19 @@ class PingStreamView(QListView):
     def _before_insert(self, *_args) -> None:
         self._was_following = self._following
 
+    def _animations_allowed(self) -> bool:
+        return self.isVisible() and THEME.ambient_active and not self.window().isMinimized()
+
     def _after_insert(self, *_args) -> None:
-        if (self.isVisible() and THEME.ambient_active and not self.window().isMinimized()
-                and not self._fresh_timer.isActive()):
+        if not self._fresh_timer.isActive() and self._animations_allowed():
             self._fresh_timer.start()
+
+    def _before_evict(self, count: int) -> None:
+        # Qt would make the next row current and scroll to it (right away, or
+        # when the view is shown again): forget a current row that drops off.
+        current = self.currentIndex()
+        if current.isValid() and current.row() < count:
+            self.selectionModel().clearCurrentIndex()
 
     def _before_remove(self, _parent, first: int, last: int) -> None:
         self._removed_rows = last - first + 1
@@ -315,16 +347,26 @@ class PingStreamView(QListView):
             bar.setValue(max(0, bar.value() - removed * self._delegate.row_height()))
 
     def _tick_fresh(self) -> None:
-        if not self._model.has_fresh_rows() or not self.isVisible() or self.window().isMinimized():
+        model = self._model
+        fresh = model.prune_fresh()
+        # Fresh rows are always the newest ones; repaint only those (plus the
+        # ones that just expired, to clear their last highlight frame).
+        span = max(fresh, self._fresh_rows_painted)
+        self._fresh_rows_painted = fresh
+        rows = model.rowCount()
+        if span and rows:
+            first = self.visualRect(model.index(max(0, rows - span)))
+            last = self.visualRect(model.index(rows - 1))
+            self.viewport().update(first.united(last))
+        if not fresh or not self._animations_allowed():
             self._fresh_timer.stop()
-        self.viewport().update()
 
     def _theme_changed(self) -> None:
         self.doItemsLayout()
         self.viewport().update()
 
     # ---------------------------------------------------------------- input
-    def wheelEvent(self, event) -> None:
+    def wheelEvent(self, event) -> None:  # also used for the wheel over the scrollbar
         bar = self._scrollbar
         pixel = event.pixelDelta().y()
         if pixel and not event.angleDelta().y() % 120 == 0:
@@ -352,10 +394,16 @@ class PingStreamView(QListView):
             return
         super().keyPressEvent(event)
 
+    def hideEvent(self, event) -> None:
+        self._follow_on_show = self._following
+        super().hideEvent(event)
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        if self._following:
-            QTimer.singleShot(0, self.scroll_to_latest_instantly)
+        # Qt may scroll while showing (pending layout / current item); whoever
+        # followed the newest ping when the view was hidden keeps following it.
+        if self._following or self._follow_on_show:
+            QTimer.singleShot(0, self, self.scroll_to_latest_instantly)
 
 
 class PingStream(QFrame):
