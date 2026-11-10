@@ -276,6 +276,9 @@ class PingStreamView(FastListView):
         model.rowsRemoved.connect(self._after_remove)
         model.modelReset.connect(lambda: QTimer.singleShot(0, self, self.scroll_to_latest_instantly))
         self._scrollbar.valueChanged.connect(self._on_scrolled)
+        # Follow (or stop following) as soon as a glide heads to (or away from) the
+        # bottom: arrows, track clicks and the wheel all glide.
+        self._scrollbar.glideStarted.connect(lambda: self._set_following(self._at_bottom()))
         self._scrollbar.glideFinished.connect(lambda: self._set_following(self._at_bottom()))
         self._scrollbar.rangeChanged.connect(self._on_range_changed)
         THEME.changed.connect(self._theme_changed)
@@ -378,6 +381,10 @@ class PingStreamView(FastListView):
             return
         if event.key() == Qt.Key.Key_End:
             self.scroll_to_latest()
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Home:
+            self._scrollbar.glide_to(self._scrollbar.minimum(), 360)  # the oldest ping
             event.accept()
             return
         super().keyPressEvent(event)

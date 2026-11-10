@@ -22,6 +22,7 @@ from src.ui.theme import THEME, mix
 
 
 class SmoothScrollBar(QScrollBar):
+    glideStarted = Signal()  # glide_target is the new destination
     glideFinished = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -104,6 +105,7 @@ class SmoothScrollBar(QScrollBar):
         self._glide.setStartValue(float(start))
         self._glide.setEndValue(float(value))
         self._glide.start()
+        self.glideStarted.emit()
 
     def scroll_wheel(self, event, step: float) -> None:
         """Glide ``step`` px per wheel notch; touchpads scroll by their own pixels."""

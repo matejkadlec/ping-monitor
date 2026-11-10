@@ -262,3 +262,55 @@ def test_dropped_rows_do_not_cut_a_glide_short(qapp, motion):
     pump(qapp, 0.5)
     assert bar.value() == 1600 - view._delegate.row_height()
     stream.deleteLater()
+
+
+def test_arrow_clicks_update_following_right_away(qapp, motion):
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    from src.ui.ping_stream import PingStream
+
+    stream = PingStream()
+    stream.resize(600, 300)
+    stream.show()
+    stream.model.reset_rows(results(200))
+    pump(qapp, 0.5)
+    view = stream.view
+    bar = view.verticalScrollBar()
+
+    def click(y: float) -> None:
+        point = QPointF(bar.width() / 2, y)
+        bar.mousePressEvent(QMouseEvent(QMouseEvent.Type.MouseButtonPress, point, point,
+                                        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                                        Qt.KeyboardModifier.NoModifier))
+
+    assert view.following
+    click(2)  # the up arrow: glide to the oldest row
+    assert not view.following
+    stream.model.append(results(1, datetime.now())[0])  # a ping during the glide
+    pump(qapp, 0.6)
+    assert bar.value() == 0 and not view.following
+    click(bar.height() - 2)  # the down arrow: back to the newest row
+    assert view.following
+    pump(qapp, 0.6)
+    assert bar.value() == bar.maximum()
+    stream.deleteLater()
+
+
+def test_home_glides_to_the_oldest_ping(qapp, motion):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+
+    from src.ui.ping_stream import PingStream
+
+    stream = PingStream()
+    stream.resize(600, 300)
+    stream.show()
+    stream.model.reset_rows(results(200))
+    pump(qapp, 0.5)
+    view = stream.view
+    view.setCurrentIndex(stream.model.index(150, 0))  # a clicked row
+    view.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Home, Qt.KeyboardModifier.NoModifier))
+    pump(qapp, 0.6)
+    assert view.verticalScrollBar().value() == 0 and not view.following
+    stream.deleteLater()
