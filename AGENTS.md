@@ -6,8 +6,9 @@ This file is for coding agents working on this repository.
 
 - Runtime target is **Windows** (Python 3.14+, PySide6). The app is started with `run.vbs` (hidden `pythonw.exe`), set up with `setup.bat` (`uv sync --frozen --no-dev` into `venv`).
 - The project lives at `C:\Users\matka\projects\ping-monitor` (from WSL: `/mnt/c/Users/matka/projects/ping-monitor`).
-- Development and tests also work on Linux/WSL: `PING_MONITOR_SIMULATE=1` replaces real pings with simulated ones and `QT_QPA_PLATFORM=offscreen` runs the UI without a display.
+- Development and tests also work on Linux/WSL: `PING_MONITOR_SIMULATE=1` replaces real pings with simulated ones and `QT_QPA_PLATFORM=offscreen` runs the UI without a display (the tests set it themselves).
 - `PING_MONITOR_DATA_DIR=<folder>` redirects settings and logs (tests use a temp folder).
+- `setup.bat` and `run.vbs` are Windows scripts: from WSL run them with `cmd.exe /c setup.bat` and `wscript.exe run.vbs`.
 
 ## Structure
 
@@ -24,6 +25,7 @@ ping-monitor/
 │   │   ├── engine.py        # PingEngine: one worker thread per server on a wall-clock grid
 │   │   ├── stats.py         # ServerHistory: window stats (O(1)), health, session counters
 │   │   ├── spike_log.py     # current / previous session logs
+│   │   ├── alerts.py        # when to notify "failing" / "healthy again"
 │   │   ├── settings.py      # Settings dataclass, validation, JSON persistence
 │   │   ├── autostart.py     # "Start with Windows" (HKCU Run key)
 │   │   ├── fileio.py        # atomic writes
@@ -35,6 +37,7 @@ ping-monitor/
 │   │   ├── server_page.py   # header + status pill, chart, stream, stats bar
 │   │   ├── latency_chart.py # custom painted chart (cached static layer + animated head)
 │   │   ├── ping_stream.py   # virtualized list (model/delegate/view)
+│   │   ├── fast_list.py     # FastListView: one-column table used as a fast list
 │   │   ├── overlay.py       # in-window overlays (blur + dim), Panel base, ConfirmDialog
 │   │   ├── config_panel.py  # Config overlay
 │   │   ├── logs_panel.py    # Logs overlay
@@ -51,7 +54,7 @@ ping-monitor/
 
 1. `PingEngine` workers ping all servers in parallel on a shared grid; the first ping is immediate. Missed slots become one `GAP` result (never fake pings).
 2. Workers call the engine callback, which emits a Qt signal; `AppController._on_result` receives it on the GUI thread (queued connection).
-3. The controller drops results of removed/changed servers or while paused, updates `ServerHistory`, records spikes/losses in `SpikeLog`, then updates the page, the tab and (for the first server) the tray.
+3. The controller drops results of removed/changed servers or while paused, updates `ServerHistory`, records spikes/losses in `SpikeLog`, then updates the page, the tab and (for the first server) the tray and `HealthAlerts` (notifications).
 4. Pages read everything from their `ServerHistory` (`reload()` after resets or settings changes).
 
 ## Constraints And Practical Notes
@@ -68,15 +71,17 @@ ping-monitor/
 - **Anything clickable shows the pointer (hand) cursor on hover.** Info icons use the help cursor.
 - No instant state changes: hovers, shows/hides and color changes fade or glide (`Tween`, `fade()`, `THEME.duration()` returns 0 when Windows animations are off). Ambient motion pauses while an overlay is open.
 - Text uses the text colors; green/yellow/red only mark status (with a label or value next to them).
-- New panels subclass `overlay.Panel`; confirmations use `ConfirmDialog`, feedback uses the toasts.
+- New panels subclass `overlay.Panel`; confirmations use `ConfirmDialog`, feedback uses the toasts. Fonts and sizes set in a panel go through `Panel.themed()` so they follow scale changes; panels keep the keyboard focus inside (Tab cycles, window shortcuts wait).
 - Fonts: Montserrat for UI, JetBrains Mono for ping rows and logs.
+- Long lists use `FastListView` (fixed row height): `QListView` re-lays out every row through the Python model on each insert.
+- Animation pitfalls: connect `QVariantAnimation.valueChanged` with `controls.connect_running()` (a stopped animation emits stale values while being reconfigured), call `settle_fades()` before putting a graphics effect on an ancestor (Qt cannot nest effects), and stop timers when hidden or minimized.
 
 ## Change Workflow For Agents
 
 1. Read `untracked/TODO.md` and update task statuses when you start/finish a section.
 2. Prefer incremental patches over broad rewrites; keep `src/core` free of Qt.
-3. Run the tests: `uv run pytest` (or `QT_QPA_PLATFORM=offscreen python -m pytest`).
-4. For UI changes, look at the result: run the app with `PING_MONITOR_SIMULATE=1` (offscreen `QWidget.grab()` screenshots work too).
+3. Run the tests: `uv run pytest` on Windows; from WSL use a Linux environment outside `/mnt/c`, e.g. `UV_PROJECT_ENVIRONMENT=~/.venvs/pm uv run pytest -q -p no:cacheprovider` (a `.venv` inside the Windows folder is slow and clashes with the Windows one).
+4. For UI changes, look at the result: run the app with `PING_MONITOR_SIMULATE=1 PING_MONITOR_DATA_DIR=$(mktemp -d)` so fake spikes never reach the real `logs/` (on Windows, quit the running app first: a second start only shows its window). Offscreen `QWidget.grab()` screenshots work too.
 5. Keep naming consistent (`ping_spike`, `healthy/degraded/failing`).
 6. When debugging, inspect `logs/app.log` early (worker stalls, gaps and file errors are logged there).
 
