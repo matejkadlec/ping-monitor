@@ -11,6 +11,7 @@ changes it outside the app:
 """
 
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -102,12 +103,19 @@ def set_enabled(enabled: bool) -> None:
         LOGGER.info("Autostart disabled")
 
 
+def _targets_exist(command: str) -> bool:
+    paths = re.findall(r'"([^"]+)"', command)
+    return bool(paths) and all(Path(path).exists() for path in paths)
+
+
 def refresh() -> None:
-    """On start: point an enabled entry at this copy of the app (the folder may
-    have moved or the venv been recreated since it was turned on)."""
+    """On a real start: repair an enabled entry whose program or script no longer
+    exists (the folder moved or the venv was recreated). An entry that still
+    works is left alone, so another copy of the app never takes it over."""
     if not is_enabled():
         return
-    command = launch_command()
-    if registry.read(RUN_KEY, VALUE_NAME) != command:
+    stored = str(registry.read(RUN_KEY, VALUE_NAME) or "")
+    if not _targets_exist(stored):
+        command = launch_command()
         registry.write_string(RUN_KEY, VALUE_NAME, command)
-        LOGGER.info("Autostart entry updated: %s", command)
+        LOGGER.info("Autostart entry repaired: %s", command)

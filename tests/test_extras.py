@@ -187,10 +187,38 @@ def test_autostart_follows_windows_startup_settings(monkeypatch):
     assert approved not in fake.values and autostart.is_enabled()
 
     fake.values[run] = '"C:\\old place\\pythonw.exe" "C:\\old place\\main.py" --minimized'
-    autostart.refresh()  # the folder moved: the entry follows this copy
+    autostart.refresh()  # the folder moved: the entry is repaired
     assert fake.values[run] == autostart.launch_command()
+
+    import sys
+    working = f'"{sys.executable}" "{__file__}" --minimized'
+    fake.values[run] = working  # another copy that still works is not taken over
+    autostart.refresh()
+    assert fake.values[run] == working
 
     autostart.set_enabled(False)
     assert run not in fake.values and not autostart.is_enabled()
     autostart.refresh()
     assert run not in fake.values
+
+
+def test_only_waking_from_sleep_delays_alerts(controller, monkeypatch):
+    sent = []
+    monkeypatch.setattr(controller.tray, "notify", lambda title, *args, **kwargs: sent.append(title))
+    no_waiting(controller)
+    server = controller.settings.servers[0]
+    now = datetime.now()
+    for offset in range(3):  # an outage where every ping call hangs: slow-call gaps
+        controller._on_result(PingResult(server.name, server.host, now + timedelta(seconds=3 * offset),
+                                         PingStatus.GAP, gap_seconds=2, detail="slow-call"))
+        controller._on_result(PingResult(server.name, server.host, now + timedelta(seconds=3 * offset + 2),
+                                         PingStatus.TIMEOUT))
+    assert sent == ["cloudflare.com is failing"]
+
+    no_waiting(controller)
+    controller.reset_server(server.name)
+    later = now + timedelta(minutes=10)
+    controller._on_result(PingResult(server.name, server.host, later, PingStatus.GAP, gap_seconds=3600,
+                                     detail="system"))  # the PC slept for an hour
+    feed(controller, [None, None, None], start=later + timedelta(seconds=1))  # Wi-Fi reconnecting
+    assert sent == ["cloudflare.com is failing"]

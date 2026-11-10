@@ -8,6 +8,7 @@ signal; every piece of state is only touched on the GUI thread.
 
 import json
 import logging
+import os
 import sys
 import time
 
@@ -15,8 +16,8 @@ from PySide6.QtCore import QEasingCurve, QObject, QPropertyAnimation, Qt, QTimer
 from PySide6.QtWidgets import QApplication
 
 from src.core import autostart
-from src.core.alerts import STARTUP_QUIET_S, WAKE_QUIET_S, Alert, HealthAlerts
-from src.core.engine import PingEngine
+from src.core.alerts import STARTUP_QUIET_S, WAKE_GAP_S, WAKE_QUIET_S, Alert, HealthAlerts
+from src.core.engine import GAP_REASON_SYSTEM, PingEngine
 from src.core.fileio import atomic_write_text
 from src.core.models import HealthStatus, PingResult, PingStatus, ServerSpec, is_problem
 from src.core.paths import APP_NAME, APP_USER_MODEL_ID, data_dir
@@ -95,10 +96,6 @@ class AppController(QObject):
             self.window.restore_state(self._load_ui_state())
         except Exception:  # a hand-edited ui_state.json must never stop the app
             LOGGER.warning("Ignoring the saved window state", exc_info=True)
-        try:
-            autostart.refresh()  # the folder may have moved since it was enabled
-        except OSError:
-            LOGGER.warning("Checking Start With Windows failed", exc_info=True)
 
         self.tray = TrayController(self)
         self.tray.showRequested.connect(self.show_window)
@@ -159,7 +156,8 @@ class AppController(QObject):
             return  # result of a server that was just removed or changed
         if self.engine.paused:
             return  # queued just before pausing
-        if result.status is PingStatus.GAP:
+        if (result.status is PingStatus.GAP and result.detail == GAP_REASON_SYSTEM
+                and (result.gap_seconds or 0) >= WAKE_GAP_S):
             self._alerts.quiet(time.monotonic(), WAKE_QUIET_S)  # back from sleep: network reconnecting
         evicted = history.add(result)
         if is_problem(result, self.settings.ping_threshold_degraded):
@@ -174,9 +172,10 @@ class AppController(QObject):
         self.window.update_tab(result.server, history.health(), self._last_values.get(result.server, ""))
         tray_server = self.tray_server
         if tray_server is not None and result.server == tray_server.name:
-            self._update_tray(alerts=True)
+            self._update_tray(problem=is_problem(result, self.settings.ping_threshold_degraded))
 
-    def _update_tray(self, alerts: bool = False) -> None:
+    def _update_tray(self, problem: bool | None = None) -> None:
+        """Refresh the tray icon; ``problem`` is given after a ping of the tray server."""
         tray_server = self.tray_server
         if tray_server is None:
             return
@@ -187,8 +186,8 @@ class AppController(QObject):
             lines.insert(0, "Paused")
         self.tray.set_status(status, lines)
         self._tray_health = status
-        if alerts:
-            self._alert(tray_server.name, self._alerts.update(status, time.monotonic()))
+        if problem is not None:
+            self._alert(tray_server.name, self._alerts.update(status, time.monotonic(), problem))
 
     def _alert(self, name: str, alert: Alert | None) -> None:
         """Windows notification when the tray server starts failing and when it is
@@ -395,6 +394,11 @@ def run(argv: list[str]) -> int:
     app.setEffectEnabled(Qt.UIEffect.UI_FadeTooltip, THEME.motion)
 
     controller = AppController(app, start_hidden="--minimized" in argv)
+    if not (os.environ.get("PING_MONITOR_DATA_DIR") or os.environ.get("PING_MONITOR_SIMULATE")):
+        try:
+            autostart.refresh()  # repair the entry if the app's folder moved
+        except OSError:
+            LOGGER.warning("Checking Start With Windows failed", exc_info=True)
     instance.activationRequested.connect(controller.show_window)
     app.aboutToQuit.connect(controller.quit)
     code = app.exec()
