@@ -54,6 +54,10 @@ class Settings:
     ping_interval: int = 1
     preserved_minutes: int = 10
     close_to_tray: bool = True
+    # Windows notification when the tray server starts failing / recovers.
+    notifications: bool = True
+    # The blue "digital rain" picture behind the UI (off = clean background).
+    background_image: bool = False
 
     # ------------------------------------------------------------------ helpers
     @property
@@ -145,6 +149,8 @@ class Settings:
             "ping_interval": self.ping_interval,
             "preserved_minutes": self.preserved_minutes,
             "close_to_tray": self.close_to_tray,
+            "notifications": self.notifications,
+            "background_image": self.background_image,
         }
 
     @classmethod
@@ -170,9 +176,7 @@ class Settings:
         else:
             preserved = _load_int(data, "preserved_minutes", defaults.preserved_minutes,
                                   PRESERVED_MIN, PRESERVED_MAX)
-        close_to_tray = data.get("close_to_tray", defaults.close_to_tray)
-        if not isinstance(close_to_tray, bool):
-            close_to_tray = defaults.close_to_tray
+        close_to_tray = _load_bool(data, "close_to_tray", defaults.close_to_tray)
 
         return cls(
             servers=servers,
@@ -181,6 +185,8 @@ class Settings:
             ping_interval=interval,
             preserved_minutes=preserved,
             close_to_tray=close_to_tray,
+            notifications=_load_bool(data, "notifications", defaults.notifications),
+            background_image=_load_bool(data, "background_image", defaults.background_image),
         )
 
 
@@ -217,6 +223,11 @@ def _range_error(field: str, label: str, value: int, minimum: int, maximum: int,
     if minimum <= value <= maximum:
         return []
     return [FieldError(field, f"{label} must be between {minimum} and {maximum}{extra}.")]
+
+
+def _load_bool(data: dict, key: str, default: bool) -> bool:
+    value = data.get(key, default)
+    return value if isinstance(value, bool) else default
 
 
 def _as_int(value: Any) -> int | None:

@@ -2,8 +2,8 @@
 Main window: server tabs (top left), actions (top right), one page per server.
 """
 
-from PySide6.QtCore import QPoint, QSize, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QShortcut
+from PySide6.QtCore import QByteArray, QPoint, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
@@ -16,7 +16,7 @@ from src.core.models import HealthStatus, PingResult
 from src.core.paths import APP_NAME, asset_path
 from src.core.stats import ServerHistory
 from src.ui import win32
-from src.ui.controls import IconButton, fade, settle_fades
+from src.ui.controls import IconButton, Tween, fade, settle_fades
 from src.ui.menus import FadeMenu
 from src.ui.overlay import OverlayHost, Panel
 from src.ui.server_page import ServerPage
@@ -30,17 +30,66 @@ BASE_WIDTH, BASE_HEIGHT = 1200, 780
 
 
 class _Root(QWidget):
-    """Paints the window background; keeps overlays and toasts sized to it."""
+    """Paints the window background (plain or the optional picture, cross-faded);
+    keeps overlays and toasts sized to it."""
 
     resized = Signal()
 
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._image: QPixmap | None = None
+        self._scaled: QPixmap | None = None
+        self._image_opacity = Tween(self, self.update, value=0.0, duration=THEME.SLOW)
+        self._rescale_timer = QTimer(self)
+        self._rescale_timer.setSingleShot(True)
+        self._rescale_timer.setInterval(150)
+        self._rescale_timer.timeout.connect(self._rescale)
+
+    def set_background_image(self, enabled: bool) -> None:
+        if enabled and self._image is None:
+            path = asset_path("background.png")
+            image = QPixmap(str(path)) if path.exists() else QPixmap()
+            self._image = None if image.isNull() else image
+        if enabled:
+            self._rescale()
+        self._image_opacity.to(1.0 if enabled and self._image is not None else 0.0)
+
+    def _rescale(self) -> None:
+        if self._image is None or self.width() <= 0 or self.height() <= 0:
+            return
+        ratio = self.devicePixelRatioF()
+        target = QSize(round(self.width() * ratio), round(self.height() * ratio))
+        scaled = self._image.scaled(target, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                    Qt.TransformationMode.SmoothTransformation)
+        scaled.setDevicePixelRatio(ratio)
+        self._scaled = scaled
+        self.update()
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        if self._image_opacity.value > 0:
+            self._rescale_timer.start()
         self.resized.emit()
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(THEME.colors.abyss))
+        opacity = self._image_opacity.value
+        if opacity <= 0.001 or self._scaled is None:
+            return
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        size = self._scaled.deviceIndependentSize()
+        target = QRectF(0, 0, size.width(), size.height())
+        target.moveCenter(QRectF(self.rect()).center())
+        painter.setOpacity(opacity)
+        # Stretch the last good image while a resize is still settling.
+        cover = QRectF(self.rect())
+        if target.width() < cover.width() or target.height() < cover.height():
+            target = cover
+        painter.drawPixmap(target, self._scaled, QRectF(self._scaled.rect()))
+        veil = QColor(THEME.colors.abyss)
+        veil.setAlphaF(0.58)
+        painter.fillRect(self.rect(), veil)
 
 
 class _TopBar(QWidget):
@@ -226,6 +275,25 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+,"), self, self.configRequested.emit)
         QShortcut(QKeySequence("Ctrl+L"), self, self.logsRequested.emit)
         QShortcut(QKeySequence("Ctrl+P"), self, lambda: self.set_paused(not self._paused, emit=True))
+
+    # ------------------------------------------------------------- extras
+    def set_background_image(self, enabled: bool) -> None:
+        self._root.set_background_image(enabled)
+
+    def save_state(self) -> dict:
+        return {
+            "geometry": bytes(self.saveGeometry().toBase64().data()).decode("ascii"),
+            "tab": self.current_server(),
+        }
+
+    def restore_state(self, state: dict) -> None:
+        geometry = state.get("geometry")
+        if isinstance(geometry, str) and geometry:
+            self.restoreGeometry(QByteArray.fromBase64(geometry.encode("ascii")))
+        tab = state.get("tab")
+        if isinstance(tab, str) and tab in self._order:
+            self.tabs.set_current(self._order.index(tab), animate=False)
+            self.stack.setCurrentWidget(self._pages[tab])
 
     # ------------------------------------------------------------ overlays
     def open_panel(self, panel: Panel) -> None:

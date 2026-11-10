@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.core import validation
+from src.core import autostart, validation
 from src.core.models import PingStatus, ServerSpec
 from src.core.pinger import create_pinger, resolve_ipv4
 from src.core.settings import (
@@ -129,6 +129,7 @@ class ConfigPanel(Panel):
                  overlay: OverlayHost, toasts: ToastManager) -> None:
         super().__init__("Config", width=620)
         self._initial = settings
+        self._autostart_initial = autostart.is_enabled() if autostart.is_supported() else None
         self._on_save = on_save
         self._overlay = overlay
         self._toasts = toasts
@@ -232,7 +233,27 @@ class ConfigPanel(Panel):
         self.close_to_tray.toggled.connect(self._changed)
         self._label_row(4, "Close To Tray", "App will minimize to system tray icon instead of closing.",
                         self.close_to_tray)
+        first = settings.servers[0].name if settings.servers else "the first server"
+        self.notifications = self._check_row(
+            5, "Notifications", settings.notifications,
+            f"Show a Windows notification when {first} (the tray icon server) starts failing "
+            "and when it is healthy again.")
+        self.background_image = self._check_row(
+            6, "Background Image", settings.background_image,
+            "Show the blue background picture behind the app instead of the plain dark color.")
+        self.start_with_windows: CheckBox | None = None
+        if self._autostart_initial is not None:
+            self.start_with_windows = self._check_row(
+                7, "Start With Windows", self._autostart_initial,
+                "Start Ping Monitor in the tray when you sign in to Windows.")
         self._body.addLayout(grid)
+
+    def _check_row(self, row: int, text: str, checked: bool, tooltip: str) -> CheckBox:
+        checkbox = CheckBox()
+        checkbox.setChecked(checked)
+        checkbox.toggled.connect(self._changed)
+        self._label_row(row, text, tooltip, checkbox)
+        return checkbox
 
     def _label_row(self, row: int, text: str, tooltip: str, widget: QWidget) -> None:
         label_box = QHBoxLayout()
@@ -368,15 +389,21 @@ class ConfigPanel(Panel):
         return self._initial.with_changes(
             servers=tuple(row.spec() for row in self._rows if row.name.text().strip() or row.host.text().strip()),
             close_to_tray=self.close_to_tray.isChecked(),
+            notifications=self.notifications.isChecked(),
+            background_image=self.background_image.isChecked(),
             **values,
         )
 
+    def _autostart_changed(self) -> bool:
+        return (self.start_with_windows is not None
+                and self.start_with_windows.isChecked() != self._autostart_initial)
+
     def is_dirty(self) -> bool:
-        if not hasattr(self, "close_to_tray"):
+        if not hasattr(self, "background_image"):
             return False  # still building
         current = self._collect()
-        return current != self._initial or any(row.is_empty() and (row.name.text() or row.host.text())
-                                               for row in self._rows)
+        return (current != self._initial or self._autostart_changed()
+                or any(row.is_empty() and (row.name.text() or row.host.text()) for row in self._rows))
 
     def _changed(self, *_args) -> None:
         if hasattr(self, "save_button"):
@@ -486,6 +513,14 @@ class ConfigPanel(Panel):
             self._toasts.error(f"Could not save the config: {error}")
             return
         self._initial = settings
+        if self._autostart_changed():
+            enabled = self.start_with_windows.isChecked()
+            try:
+                autostart.set_enabled(enabled)
+                self._autostart_initial = enabled
+            except OSError as error:
+                self._toasts.error(f"Could not change Start With Windows: {error}")
+                return
         self._toasts.success("Config saved.")
         self.closeRequested.emit()
 

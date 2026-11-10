@@ -6,18 +6,21 @@ Results travel from the worker threads to the GUI thread through a queued Qt
 signal; every piece of state is only touched on the GUI thread.
 """
 
+import json
 import logging
 import sys
+import time
 
 from PySide6.QtCore import QEasingCurve, QObject, QPropertyAnimation, Qt, QTimer, Signal
 from PySide6.QtWidgets import QApplication
 
 from src.core.engine import PingEngine
+from src.core.fileio import atomic_write_text
 from src.core.models import HealthStatus, PingResult, PingStatus, ServerSpec, is_problem
 from src.core.paths import APP_NAME, APP_USER_MODEL_ID, data_dir
 from src.core.settings import Settings, load_settings, save_settings
 from src.core.spike_log import SpikeLog
-from src.core.stats import ServerHistory
+from src.core.stats import STATUS_HIT_THRESHOLD, STATUS_WINDOW_SECONDS, ServerHistory
 from src.ui import win32
 from src.ui.config_panel import ConfigPanel
 from src.ui.logs_panel import LogsPanel
@@ -31,6 +34,8 @@ LOGGER = logging.getLogger(__name__)
 
 WATCHDOG_INTERVAL_MS = 2_000
 CLEANUP_INTERVAL_MS = 60 * 60 * 1000
+UI_STATE_FILE_NAME = "ui_state.json"
+NOTIFY_COOLDOWN_S = 60.0
 
 
 def short_value(result: PingResult) -> str | None:
@@ -58,6 +63,9 @@ class AppController(QObject):
         self._last_values: dict[str, str] = {}
         self._quitting = False
         self._tray_hint_shown = False
+        self._tray_health = HealthStatus.UNKNOWN
+        self._failing_alert = False
+        self._last_failing_alert = -NOTIFY_COOLDOWN_S
 
         self.spike_log = SpikeLog(data_dir())
         self.spike_log.start_session()
@@ -80,6 +88,8 @@ class AppController(QObject):
         self.window.configRequested.connect(self.open_config)
         self.window.logsRequested.connect(self.open_logs)
         self.window.set_servers(self._page_specs())
+        self.window.set_background_image(self.settings.background_image)
+        self.window.restore_state(self._load_ui_state())
 
         self.tray = TrayController(self)
         self.tray.showRequested.connect(self.show_window)
@@ -165,6 +175,29 @@ class AppController(QObject):
         if self.engine.paused:
             lines.insert(0, "Paused")
         self.tray.set_status(status, lines)
+        previous, self._tray_health = self._tray_health, status
+        if previous is not status:
+            self._notify_health_change(tray_server.name, previous, status)
+
+    def _notify_health_change(self, name: str, previous: HealthStatus, status: HealthStatus) -> None:
+        """Windows notification when the tray server starts failing and when it recovers."""
+        if not self.settings.notifications:
+            return
+        now = time.monotonic()
+        if status is HealthStatus.FAILING and not self._failing_alert:
+            if now - self._last_failing_alert < NOTIFY_COOLDOWN_S:
+                return  # flapping: do not spam
+            self._failing_alert = True
+            self._last_failing_alert = now
+            self.tray.notify(
+                f"{name} is failing",
+                f"{STATUS_HIT_THRESHOLD} or more pings above {self.settings.ping_threshold_degraded} ms "
+                f"or lost in the last {STATUS_WINDOW_SECONDS // 60} minutes.",
+                warning=True,
+            )
+        elif status is HealthStatus.HEALTHY and self._failing_alert:
+            self._failing_alert = False
+            self.tray.notify(f"{name} is healthy again", "Pings are back to normal.")
 
     # ------------------------------------------------------------ actions
     def reset_server(self, name: str) -> None:
@@ -214,6 +247,7 @@ class AppController(QObject):
         for name, history in self.histories.items():
             self.window.update_tab(name, history.health(), self._last_values.get(name, ""))
         self.tray.set_close_to_tray(settings.close_to_tray)
+        self.window.set_background_image(settings.background_image)
         self._update_tray()
         LOGGER.info("Settings applied")
 
@@ -249,6 +283,7 @@ class AppController(QObject):
         window = self.window
         if not window.isVisible():
             return
+        self._save_ui_state()
         if not THEME.motion:
             window.hide()
             return
@@ -258,6 +293,24 @@ class AppController(QObject):
         self._window_fade.setStartValue(window.windowOpacity())
         self._window_fade.setEndValue(0.0)
         self._window_fade.start()
+
+    # ----------------------------------------------------------- ui state
+    def _ui_state_path(self):
+        return data_dir() / UI_STATE_FILE_NAME
+
+    def _load_ui_state(self) -> dict:
+        try:
+            with open(self._ui_state_path(), "r", encoding="utf-8") as handle:
+                state = json.load(handle)
+            return state if isinstance(state, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _save_ui_state(self) -> None:
+        try:
+            atomic_write_text(self._ui_state_path(), json.dumps(self.window.save_state()) + "\n")
+        except OSError:
+            LOGGER.warning("Saving the window state failed", exc_info=True)
 
     def _window_fade_finished(self) -> None:
         if self._hide_after_fade:
@@ -282,6 +335,8 @@ class AppController(QObject):
             return
         self._quitting = True
         LOGGER.info("Shutting down")
+        if self.window.isVisible():
+            self._save_ui_state()
         self._watchdog.stop()
         self._cleanup.stop()
         # Hide first so closing feels instant; workers may need a moment to stop.

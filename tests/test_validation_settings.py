@@ -79,6 +79,8 @@ def test_roundtrip(tmp_path):
         ping_interval=2,
         preserved_minutes=PRESERVE_FOREVER,
         close_to_tray=False,
+        notifications=False,
+        background_image=True,
     )
     save_settings(settings, path)
     assert load_settings(path) == settings
