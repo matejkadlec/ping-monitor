@@ -20,6 +20,7 @@ from src.core.spike_log import SpikeLog
 from src.core.stats import ServerHistory
 from src.ui import win32
 from src.ui.config_panel import ConfigPanel
+from src.ui.logs_panel import LogsPanel
 from src.ui.main_window import MainWindow
 from src.ui.theme import THEME
 from src.ui.tray import TrayController
@@ -77,6 +78,7 @@ class AppController(QObject):
         self.window.resetAllRequested.connect(self.reset_all)
         self.window.pauseToggled.connect(self.set_paused)
         self.window.configRequested.connect(self.open_config)
+        self.window.logsRequested.connect(self.open_logs)
         self.window.set_servers(self._page_specs())
 
         self.tray = TrayController(self)
@@ -140,7 +142,10 @@ class AppController(QObject):
             return  # queued just before pausing
         evicted = history.add(result)
         if is_problem(result, self.settings.ping_threshold_degraded):
-            self.spike_log.record(result)
+            entry = self.spike_log.record(result)
+            logs = self.window.overlay.contains_panel(LogsPanel)
+            if logs is not None:
+                logs.add_entry(entry)
         value = short_value(result)
         if value is not None:
             self._last_values[result.server] = value
@@ -218,6 +223,12 @@ class AppController(QObject):
             return
         self.show_window()
         self.window.open_panel(ConfigPanel(self.settings, self.apply_settings, overlay, self.window.toasts))
+
+    def open_logs(self) -> None:
+        if self.window.overlay.contains_panel(LogsPanel) is not None:
+            return
+        self.show_window()
+        self.window.open_panel(LogsPanel(self.spike_log, self.settings.ping_threshold_degraded, data_dir()))
 
     # ------------------------------------------------------------- window
     def show_window(self) -> None:

@@ -58,6 +58,7 @@ class MainWindow(QMainWindow):
     resetAllRequested = Signal()
     pauseToggled = Signal(bool)
     configRequested = Signal()
+    logsRequested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -90,10 +91,13 @@ class MainWindow(QMainWindow):
         self.pause_button.clicked.connect(lambda: self.set_paused(not self._paused, emit=True))
         self.reset_button = IconButton("rotate-ccw", "Reset metrics", self.top_bar)
         self.reset_button.clicked.connect(self._show_reset_menu)
+        self.logs_button = IconButton("scroll-text", "Open logs", self.top_bar)
+        self.logs_button.clicked.connect(self.logsRequested.emit)
         self.config_button = IconButton("settings", "Open config", self.top_bar)
         self.config_button.clicked.connect(self.configRequested.emit)
         self._actions.addWidget(self.pause_button)
         self._actions.addWidget(self.reset_button)
+        self._actions.addWidget(self.logs_button)
         self._actions.addWidget(self.config_button)
 
         self._top_layout = QHBoxLayout(self.top_bar)
@@ -220,6 +224,7 @@ class MainWindow(QMainWindow):
                       lambda n=number: self.tabs.set_current(n - 1) if n <= self.tabs.count() else None)
         QShortcut(QKeySequence("Ctrl+R"), self, self._reset_current)
         QShortcut(QKeySequence("Ctrl+,"), self, self.configRequested.emit)
+        QShortcut(QKeySequence("Ctrl+L"), self, self.logsRequested.emit)
         QShortcut(QKeySequence("Ctrl+P"), self, lambda: self.set_paused(not self._paused, emit=True))
 
     # ------------------------------------------------------------ overlays
